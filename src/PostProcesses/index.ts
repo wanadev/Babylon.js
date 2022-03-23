@@ -31,3 +31,4 @@ export * from "./vrDistortionCorrectionPostProcess";
 export * from "./vrMultiviewToSingleviewPostProcess";
 export * from "./screenSpaceReflectionPostProcess";
 export * from "./screenSpaceCurvaturePostProcess";
+export * from "./screenSpaceReflection2PostProcess";
