@@ -15,7 +15,7 @@ import { Constants } from "../Engines/constants";
 import { GeometryBufferRenderer } from '../Rendering/geometryBufferRenderer';
 import { serialize, SerializationHelper } from '../Misc/decorators';
 import { PrePassRenderer } from "../Rendering/prePassRenderer";
-import { ScreenSpaceReflections2Configuration } from "../Rendering/screenSpaceReflections2Configuration";
+// import { ScreenSpaceReflections2Configuration } from "../Rendering/screenSpaceReflections2Configuration";
 
 // import "../Shaders/reflectivityMap.fragment";
 // import "../Shaders/reflectivityMap.vertex";
@@ -28,7 +28,7 @@ import "../Shaders/screenSpaceReflection2.vertex";
 import { RegisterClass } from "../Misc/typeStore";
 // import { Mesh } from "../Meshes/mesh";
 import { AbstractMesh } from "../Meshes/abstractMesh";
-import { SubMesh, Viewport } from "..";
+// import { SubMesh, Viewport } from "..";
 // import { RenderTargetTexture, Texture } from "..";
 //import { RegisterClass } from '../Misc/typeStore';
 
@@ -139,11 +139,11 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             // }
 
             // our own prepass
-            var renderSpecularTarget = new RenderTargetTexture("specular to texture", {height: engine.getRenderHeight(),  width: engine.getRenderWidth()}, scene); // TODO change texture size
+            const renderSpecularTarget = new RenderTargetTexture("specular to texture", {height: engine.getRenderHeight(),  width: engine.getRenderWidth()}, scene); // TODO change texture size
             scene.customRenderTargets.push(renderSpecularTarget);
             // {height: engine.getRenderHeight(),  width: engine.getRenderWidth()}
 
-            var renderMetallicTarget = new RenderTargetTexture("metallic to texture", {height: engine.getRenderHeight(),  width: engine.getRenderWidth()}, scene);
+            const renderMetallicTarget = new RenderTargetTexture("metallic to texture", {height: engine.getRenderHeight(),  width: engine.getRenderWidth()}, scene);
             scene.customRenderTargets.push(renderMetallicTarget);
 
             scene.executeWhenReady(() => {
@@ -222,9 +222,9 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             this.computeMetallicMap(mesh, scene, renderMetallicTarget);
 
             if (mesh.getChildMeshes()) {
-                var subM = mesh.getChildMeshes();
-                for (var i = 0; i < subM.length; i++) {
-                    var m = subM[i];
+                const subM = mesh.getChildMeshes();
+                for (let i = 0; i < subM.length; i++) {
+                    const m = subM[i];
                     this.iterateOverTheSceneMeshes(m, scene, renderSpecularTarget, renderMetallicTarget);
                 }
                 return;
@@ -319,7 +319,15 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         this.updateEffect(defines.join("\n"));
     }
 
-    /** @hidden */
+    /** @hidden **/
+    /**
+     * 
+     * @param parsedPostProcess 
+     * @param targetCamera 
+     * @param scene 
+     * @param rootUrl 
+     * @returns 
+     */
     public static _Parse(parsedPostProcess: any, targetCamera: Camera, scene: Scene, rootUrl: string) {
         return SerializationHelper.Parse(() => {
             return new ScreenSpaceReflection2PostProcess(
@@ -496,9 +504,9 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
     private computeSpecularMap(m: AbstractMesh, scene: Scene, renderSpecularTarget : RenderTargetTexture) {
 
         //var defines = []; // used in the fragment shader to compute the Occlusion-Roughness-Metallic-Reflectivity map
-        var defines: string[] = [];
+        const defines: string[] = [];
 
-        let specularMapShader = new ShaderMaterial(
+        const specularMapShader = new ShaderMaterial(
             "specularMapShader",
             scene,
             {
@@ -632,9 +640,9 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
     private computeMetallicMap(m: AbstractMesh, scene: Scene, renderMetallicTarget : RenderTargetTexture) {
 
         //var defines = []; // used in the fragment shader to compute the Occlusion-Roughness-Metallic-Reflectivity map
-        var defines: string[] = [];
+        const defines: string[] = [];
 
-        let metallicMapShader = new ShaderMaterial(
+        const metallicMapShader = new ShaderMaterial(
             "metallicMapShader",
             scene,
             {
