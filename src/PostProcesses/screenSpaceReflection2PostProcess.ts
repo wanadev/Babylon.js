@@ -41,30 +41,27 @@ declare type Scene = import("../scene").Scene;
  */
 export class ScreenSpaceReflection2PostProcess extends PostProcess {
     /**
-     * Gets or sets a reflection threshold mainly used to adjust the reflection's height.
+     * Gets or sets the maxDistance used to define how far in the scene we look for reflection
      */
     @serialize()
-    public threshold: number = 1.2;
+    public maxDistance: number = 15; // maxDistance defined according to the scene size if still equal to -1.0 during the post process 
     /**
-     * Gets or sets the current reflection strength. 1.0 is an ideal value but can be increased/decreased for particular results.
+     * Gets or sets the resolution used for the first pass of the 2D ray marching algorithm. 
+     * Controls how many fragments are skipped while marching the reflection ray. Typically in interval [0.1, 1.0]. 
+     * If resolution equals 0.0, every fragments are skiped and this results in no reflection at all.
      */
     @serialize()
-    public strength: number = 1;
+    public resolution: number = 0.5;
     /**
-     * Gets or sets the falloff exponent used while computing fresnel. More the exponent is high, more the reflections will be discrete.
+     * Gets or sets the number of steps allowed for the second pass of the algorithm. More the steps is high, more the reflections will be precise.
      */
     @serialize()
-    public reflectionSpecularFalloffExponent: number = 3;
+    public steps: number = 10;
     /**
-     * Gets or sets the step size used to iterate until the effect finds the color of the reflection's pixel. Typically in interval [0.1, 1.0]
+     * Gets or sets the thickness value used as tolerance when computing the intersection between the reflected ray and the scene. 
      */
     @serialize()
-    public step: number = 1.0;
-    /**
-     * Gets or sets the factor applied when computing roughness. Default value is 0.2.
-     */
-    @serialize()
-    public roughnessFactor: number = 0.2;
+    public thickness: number = 0.3;
 
     private _forceGeometryBuffer: boolean = false;
     private get _geometryBufferRenderer(): Nullable<GeometryBufferRenderer> {
@@ -111,9 +108,9 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
      */
          constructor(name: string, scene: Scene, options: number | PostProcessOptions, camera: Nullable<Camera>, engine: Engine, samplingMode?: number, reusable?: boolean, textureType: number = Constants.TEXTURETYPE_UNSIGNED_INT, blockCompilation = false, forceGeometryBuffer = false) {
             super(name, 'screenSpaceReflection2',
-                ["projection", "view"], //"threshold", "reflectionSpecularFalloffExponent", "strength", "stepSize", "roughnessFactor"],
+                ["projection", "view", "maxDistance", "resolution", "steps", "thickness"], 
              [
-                "textureSampler", "normalSampler", "positionSampler", "specularMap", "metallicMap"// "world", "worldView", "worldViewProjection" //, "reflectivitySampler"
+                "textureSampler", "normalSampler", "positionSampler", "specularMap", "metallicMap"
             ], 1.0, camera, Texture.BILINEAR_SAMPLINGMODE, engine, reusable,
                 "#define SSR_SUPPORTED\n",
                 textureType, undefined, null, blockCompilation);
@@ -206,6 +203,11 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
 
                 effect.setMatrix("projection", projectionMatrix);
                 effect.setMatrix("view", viewMatrix);
+
+                effect.setFloat("maxDistance", this.maxDistance);
+                effect.setFloat("resolution", this.resolution);
+                effect.setInt("steps", this.steps);
+                effect.setFloat("thickness", this.thickness);
             };
 
             this._isSceneRightHanded = scene.useRightHandedSystem;
@@ -230,96 +232,6 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 return;
             }
         }
-
-    // /**
-    //  * Creates a new instance of ScreenSpaceReflectionPostProcess.
-    //  * @param name The name of the effect.
-    //  * @param scene The scene containing the objects to calculate reflections.
-    //  * @param options The required width/height ratio to downsize to before computing the render pass.
-    //  * @param camera The camera to apply the render pass to.
-    //  * @param samplingMode The sampling mode to be used when computing the pass. (default: 0)
-    //  * @param engine The engine which the post process will be applied. (default: current engine)
-    //  * @param reusable If the post process can be reused on the same frame. (default: false)
-    //  * @param textureType Type of textures used when performing the post process. (default: 0)
-    //  * @param blockCompilation If compilation of the shader should not be done in the constructor. The updateEffect method can be used to compile the shader at a later time. (default: true)
-    //  * @param forceGeometryBuffer If this post process should use geometry buffer instead of prepass (default: false)
-    //  */
-    // constructor(name: string, scene: Scene, options: number | PostProcessOptions, camera: Nullable<Camera>, samplingMode?: number, engine?: Engine, reusable?: boolean, textureType: number = Constants.TEXTURETYPE_UNSIGNED_INT, blockCompilation = false, forceGeometryBuffer = false) {
-    //     super(name, "screenSpaceReflection", [
-    //         "projection", "view", "threshold", "reflectionSpecularFalloffExponent", "strength", "stepSize", "roughnessFactor"
-    //     ], [
-    //         "textureSampler", "normalSampler", "positionSampler", "reflectivitySampler"
-    //     ], options, camera, samplingMode, engine, reusable,
-    //         "#define SSR_SUPPORTED\n#define REFLECTION_SAMPLES 64\n#define SMOOTH_STEPS 5\n",
-    //         textureType, undefined, null, blockCompilation);
-
-    //     this._forceGeometryBuffer = forceGeometryBuffer;
-
-    //     if (this._forceGeometryBuffer) {
-    //         // Get geometry buffer renderer and update effect
-    //         const geometryBufferRenderer = scene.enableGeometryBufferRenderer();
-    //         if (geometryBufferRenderer) {
-    //             if (geometryBufferRenderer.isSupported) {
-    //                 geometryBufferRenderer.enablePosition = true;
-    //                 geometryBufferRenderer.enableReflectivity = true;
-    //             }
-    //         }
-    //     } else {
-    //         const prePassRenderer = scene.enablePrePassRenderer();
-    //         prePassRenderer?.markAsDirty();
-    //         this._prePassEffectConfiguration = new ScreenSpaceReflectionsConfiguration();
-    //     }
-
-    //     this._updateEffectDefines();
-
-    //     // On apply, send uniforms
-    //     this.onApply = (effect: Effect) => {
-    //         const geometryBufferRenderer = this._geometryBufferRenderer;
-    //         const prePassRenderer = this._prePassRenderer;
-
-    //         if (!prePassRenderer && !geometryBufferRenderer) {
-    //             return;
-    //         }
-
-    //         if (geometryBufferRenderer) {
-    //             // Samplers
-    //             const positionIndex = geometryBufferRenderer.getTextureIndex(GeometryBufferRenderer.POSITION_TEXTURE_TYPE);
-    //             const roughnessIndex = geometryBufferRenderer.getTextureIndex(GeometryBufferRenderer.REFLECTIVITY_TEXTURE_TYPE);
-
-    //             effect.setTexture("normalSampler", geometryBufferRenderer.getGBuffer().textures[1]);
-    //             effect.setTexture("positionSampler", geometryBufferRenderer.getGBuffer().textures[positionIndex]);
-    //             effect.setTexture("reflectivitySampler", geometryBufferRenderer.getGBuffer().textures[roughnessIndex]);
-    //         } else if (prePassRenderer) {
-    //             // Samplers
-    //             const positionIndex = prePassRenderer.getIndex(Constants.PREPASS_POSITION_TEXTURE_TYPE);
-    //             const roughnessIndex = prePassRenderer.getIndex(Constants.PREPASS_REFLECTIVITY_TEXTURE_TYPE);
-    //             const normalIndex = prePassRenderer.getIndex(Constants.PREPASS_NORMAL_TEXTURE_TYPE);
-
-    //             effect.setTexture("normalSampler", prePassRenderer.getRenderTarget().textures[normalIndex]);
-    //             effect.setTexture("positionSampler", prePassRenderer.getRenderTarget().textures[positionIndex]);
-    //             effect.setTexture("reflectivitySampler", prePassRenderer.getRenderTarget().textures[roughnessIndex]);
-    //         }
-
-    //         // Uniforms
-    //         const camera = scene.activeCamera;
-    //         if (!camera) {
-    //             return;
-    //         }
-
-    //         const viewMatrix = camera.getViewMatrix(true);
-    //         const projectionMatrix = camera.getProjectionMatrix(true);
-
-    //         effect.setMatrix("projection", projectionMatrix);
-    //         effect.setMatrix("view", viewMatrix);
-    //         effect.setFloat("threshold", this.threshold);
-    //         effect.setFloat("reflectionSpecularFalloffExponent", this.reflectionSpecularFalloffExponent);
-    //         effect.setFloat("strength", this.strength);
-    //         effect.setFloat("stepSize", this.step);
-    //         effect.setFloat("roughnessFactor", this.roughnessFactor);
-    //     };
-
-    //     this._isSceneRightHanded = scene.useRightHandedSystem;
-    // }
 
     /**
      * Gets whether or not smoothing reflections is enabled.
@@ -618,10 +530,10 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                     specularMapShader.setFloat("roughness", m.material.roughness);
                     defines.push("#define ROUGHNESS");
                 }
-                if ((m.material.metallic  != null || m.material.metallicRoughnessTexture != null) && m.material.baseTexture != null) {
+                if (m.material.baseTexture != null) {
                     specularMapShader.setTexture("albedoTexture", m.material.baseTexture);
                     defines.push("#define ALBEDOTEXTURE");
-                } else if ((m.material.metallic != null || m.material.metallicRoughnessTexture != null) && m.material.baseColor != null) {
+                } else if (m.material.baseColor != null) {
                     specularMapShader.setColor3("albedoColor", m.material.baseColor);
                     defines.push("#define ALBEDOCOLOR");
                 }
@@ -643,10 +555,10 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                         defines.push("#define GLOSSINESSS");
                     }
                 }
-                if (m.material.occlusionTexture != null) {
-                    specularMapShader.setTexture("occlusionTexture", m.material.occlusionTexture);
-                    defines.push("#define OCCLUSIONTEXTURE");
-                }
+                // if (m.material.occlusionTexture != null) {
+                //     specularMapShader.setTexture("occlusionTexture", m.material.occlusionTexture);
+                //     defines.push("#define OCCLUSIONTEXTURE");
+                // }
 
             }
             else if (m.material instanceof PBRMaterial) {
@@ -660,32 +572,37 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                     specularMapShader.setFloat("metallic", m.material.metallic);
                     defines.push("#define METALLIC");
                 }
-                if ((m.material.metallic != null || m.material.metallicTexture  != null) && m.material.albedoTexture != null) {
-                    specularMapShader.setTexture("albedoTexture", m.material.albedoTexture);
-                    defines.push("#define ALBEDOTEXTURE");
-                } else if ((m.material.metallic  != null || m.material.metallicTexture  != null) && m.material.albedoColor != null) {
-                    specularMapShader.setColor3("albedoColor", m.material.albedoColor);
-                    defines.push("#define ALBEDOCOLOR");
-                } else if (m.material.reflectivityColor != null) {
-                    specularMapShader.setColor3("reflectivityColor", m.material.reflectivityColor);
-                    defines.push("#define REFLECTIVITYCOLOR");
-                }
+
                 if (m.material.roughness != null) {
                     specularMapShader.setFloat("roughness", m.material.roughness);
                     defines.push("#define ROUGHNESS");
                 }
-                if (m.material.reflectivityTexture != null) {
-                    specularMapShader.setTexture("specularGlossinessTexture", m.material.reflectivityTexture);
-                    defines.push("#define SPECULARGLOSSINESSTEXTURE");
-                }
-                if (m.material.ambientTexture != null) {
-                    specularMapShader.setTexture("occlusionTexture", m.material.ambientTexture);
-                    defines.push("#define OCCLUSIONTEXTURE");
-                }
-                if (m.material.microSurface != null) {
-                    specularMapShader.setFloat("glossiness", m.material.microSurface);
-                    defines.push("#define GLOSSINESSS");
-                }
+
+                if (m.material.roughness === null && m.material.metallic === null && m.material.metallicTexture === null){ // SpecularGlossiness Model
+                    if (m.material.reflectivityTexture != null) {
+                        specularMapShader.setTexture("specularGlossinessTexture", m.material.reflectivityTexture);
+                        defines.push("#define SPECULARGLOSSINESSTEXTURE");
+                    } else if (m.material.reflectivityColor != null) {
+                        specularMapShader.setColor3("reflectivityColor", m.material.reflectivityColor);
+                        defines.push("#define REFLECTIVITYCOLOR");
+                    }
+                    if (m.material.microSurface != null) {
+                        specularMapShader.setFloat("glossiness", m.material.microSurface);
+                        defines.push("#define GLOSSINESSS");
+                    }
+                } else { // MetallicRoughness Model
+                    if (m.material.albedoTexture != null) {
+                        specularMapShader.setTexture("albedoTexture", m.material.albedoTexture);
+                        defines.push("#define ALBEDOTEXTURE");
+                    } else if (m.material.albedoColor != null) {
+                        specularMapShader.setColor3("albedoColor", m.material.albedoColor);
+                        defines.push("#define ALBEDOCOLOR");
+                    }
+                }    
+                // if (m.material.ambientTexture != null) {
+                //     specularMapShader.setTexture("occlusionTexture", m.material.ambientTexture);
+                //     defines.push("#define OCCLUSIONTEXTURE");
+                // }
             }
             else if (m.material instanceof StandardMaterial) {
                 // console.log(m.name + " StandardMaterial");
@@ -705,7 +622,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                     // not possible ?
             }
         }
-        // if there is no material, nothing is binded and we return a totally black texture
+        // if there is no material, nothing is binded and we return a totally white texture
 
         renderSpecularTarget.setMaterialForRendering(m, specularMapShader);
         renderSpecularTarget.renderList?.push(m);
