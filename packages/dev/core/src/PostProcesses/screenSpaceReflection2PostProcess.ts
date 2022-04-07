@@ -1,5 +1,4 @@
 import { Nullable } from "../types";
-import { Logger } from "../Misc/logger";
 import { Camera } from "../Cameras/camera";
 // import { Effect } from "../M    aterials/effect";
 import { Texture } from "../Materials/Textures/texture";
@@ -15,10 +14,9 @@ import { Constants } from "../Engines/constants";
 import { GeometryBufferRenderer } from '../Rendering/geometryBufferRenderer';
 import { serialize, SerializationHelper } from '../Misc/decorators';
 import { PrePassRenderer } from "../Rendering/prePassRenderer";
-// import { ScreenSpaceReflections2Configuration } from "../Rendering/screenSpaceReflections2Configuration";
+import { ScreenSpaceReflections2Configuration } from "../Rendering/screenSpaceReflections2Configuration";
+// import { PrePassRenderTarget } from "../Materials/Textures/prePassRenderTarget";
 
-// import "../Shaders/reflectivityMap.fragment";
-// import "../Shaders/reflectivityMap.vertex";
 import "../Shaders/specularMap.fragment";
 import "../Shaders/specularMap.vertex";
 import "../Shaders/metallicMap.fragment";
@@ -26,11 +24,9 @@ import "../Shaders/metallicMap.vertex";
 import "../Shaders/screenSpaceReflection2.fragment";
 import "../Shaders/screenSpaceReflection2.vertex";
 import { RegisterClass } from "../Misc/typeStore";
-// import { Mesh } from "../Meshes/mesh";
 import { AbstractMesh } from "../Meshes/abstractMesh";
-// import { SubMesh, Viewport } from "..";
-// import { RenderTargetTexture, Texture } from "..";
-//import { RegisterClass } from '../Misc/typeStore';
+// import { Mesh } from "../Meshes/mesh";
+
 
 declare type Engine = import("../Engines/engine").Engine;
 declare type Scene = import("../scene").Scene;
@@ -80,17 +76,14 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         return this._scene.prePassRenderer;
     }
 
-    private _enableSmoothReflections: boolean = false;
-    private _reflectionSamples: number = 64;
-    private _smoothSteps: number = 5;
     private _isSceneRightHanded: boolean;
 
     /**
      * Gets a string identifying the name of the class
-     * @returns "ScreenSpaceReflectionPostProcess" string
+     * @returns "ScreenSpaceReflection2PostProcess" string
      */
     public getClassName(): string {
-        return "ScreenSpaceReflectionPostProcess";
+        return "ScreenSpaceReflection2PostProcess";
     }
 
         /**
@@ -99,206 +92,144 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
      * @param scene The scene containing the objects to calculate reflections.
      * @param options The required width/height ratio to downsize to before computing the render pass.
      * @param camera The camera to apply the render pass to.
-     * @param samplingMode The sampling mode to be used when computing the pass. (default: 0)
      * @param engine The engine which the post process will be applied. (default: current engine)
+     * @param samplingMode The sampling mode to be used when computing the pass. (default: 0)
      * @param reusable If the post process can be reused on the same frame. (default: false)
      * @param textureType Type of textures used when performing the post process. (default: 0)
      * @param blockCompilation If compilation of the shader should not be done in the constructor. The updateEffect method can be used to compile the shader at a later time. (default: true)
      * @param forceGeometryBuffer If this post process should use geometry buffer instead of prepass (default: false)
      */
-         constructor(name: string, scene: Scene, options: number | PostProcessOptions, camera: Nullable<Camera>, engine: Engine, samplingMode?: number, reusable?: boolean, textureType: number = Constants.TEXTURETYPE_UNSIGNED_INT, blockCompilation = false, forceGeometryBuffer = false) {
-            super(name, 'screenSpaceReflection2',
-                ["projection", "view", "maxDistance", "resolution", "steps", "thickness"], 
-             [
-                "textureSampler", "normalSampler", "positionSampler", "specularMap", "metallicMap"
-            ], 1.0, camera, Texture.BILINEAR_SAMPLINGMODE, engine, reusable,
-                "#define SSR_SUPPORTED\n",
-                textureType, undefined, null, blockCompilation);
+    constructor(
+        name: string, 
+        scene: Scene, 
+        options: number | PostProcessOptions, 
+        camera: Nullable<Camera>, 
+        engine: Engine, 
+        samplingMode?: number, 
+        reusable?: boolean, 
+        textureType: number = Constants.TEXTURETYPE_UNSIGNED_INT, 
+        blockCompilation = true, 
+        forceGeometryBuffer = false) {
 
-                if (!camera) {
-                    return;
-                }
+        super(
+            name, 
+            'screenSpaceReflection2',
+            ["projection", "view", "maxDistance", "resolution", "steps", "thickness", "minZ", "maxZ"], 
+            ["textureSampler", "normalSampler", "depthSampler", "positionSampler", "specularMap", "metallicMap"], 
+            options, 
+            camera, 
+            samplingMode,//Texture.BILINEAR_SAMPLINGMODE, 
+            engine, 
+            reusable,
+            "#define SSR_SUPPORTED\n",
+            textureType, 
+            undefined, 
+            null, 
+            blockCompilation
+        );
 
-            this._forceGeometryBuffer = true; //forceGeometryBuffer;
-            if (this._forceGeometryBuffer) {
-                // Get geometry buffer renderer and update effect
-                const geometryBufferRenderer = scene.enableGeometryBufferRenderer();
-                if (geometryBufferRenderer) {
-                    if (geometryBufferRenderer.isSupported) {
-                        geometryBufferRenderer.enablePosition = true;
-                        // geometryBufferRenderer.enableReflectivity = true;
-                    } else {
-                        Logger.Error("Multiple Render Target support needed for screen space reflection 2 post process. Please use IsSupported test first.");
-                    }
-                }
-            }
-            // else { // doesn't work !
-            //     const prePassRenderer = scene.enablePrePassRenderer();
-            //     prePassRenderer?.markAsDirty();
-            //     this._prePassEffectConfiguration = new ScreenSpaceReflections2Configuration();
-            // }
-
-            // our own prepass
-            const renderSpecularTarget = new RenderTargetTexture("specular to texture", {height: engine.getRenderHeight(),  width: engine.getRenderWidth()}, scene); // TODO change texture size
-            scene.customRenderTargets.push(renderSpecularTarget);
-            // {height: engine.getRenderHeight(),  width: engine.getRenderWidth()}
-
-            const renderMetallicTarget = new RenderTargetTexture("metallic to texture", {height: engine.getRenderHeight(),  width: engine.getRenderWidth()}, scene);
-            scene.customRenderTargets.push(renderMetallicTarget);
-
-            scene.executeWhenReady(() => {
-                scene.meshes.forEach ((mesh) => {
-                    this.iterateOverTheSceneMeshes(mesh, scene, renderSpecularTarget, renderMetallicTarget);
-                });
-            });
-
-            this._updateEffectDefines();
-
-            // var finalPass = new PostProcess(
-            //             'SSR2 shader',
-            //             'screenSpaceReflection2', // shader name
-            //             null, // attributes
-            //             [ "specularMap", "metallicMap" ], // textures
-            //             1.0,  // options
-            //             camera,
-            //             Texture.BILINEAR_SAMPLINGMODE, // sampling
-            //             engine // engine
-            //         );
-
-            // On apply, send uniforms
-            this.onApply = (effect) => {
-
-                effect.setTexture("specularMap", renderSpecularTarget); // pass the renderSpecularTarget as our second texture
-                effect.setTexture("metallicMap", renderMetallicTarget); // pass the renderMetallicTarget as our third texture
-
-                const prePassRenderer = this._prePassRenderer;
-                // const geometryBufferRenderer = this._geometryBufferRenderer;
-
-                if (!prePassRenderer && !this._geometryBufferRenderer) {
-                    return;
-                }
-
-                if (this._geometryBufferRenderer) {
-                    // Samplers
-                    const positionIndex = this._geometryBufferRenderer.getTextureIndex(GeometryBufferRenderer.POSITION_TEXTURE_TYPE);
-                    // const roughnessIndex = geometryBufferRenderer.getTextureIndex(GeometryBufferRenderer.REFLECTIVITY_TEXTURE_TYPE);
-
-                    effect.setTexture("normalSampler", this._geometryBufferRenderer!.getGBuffer().textures[1]);
-                    effect.setTexture("positionSampler", this._geometryBufferRenderer!.getGBuffer().textures[positionIndex]);
-                    // effect.setTexture("reflectivitySampler", geometryBufferRenderer.getGBuffer().textures[roughnessIndex]);
-                }
-                // else if (prePassRenderer) { // doesn't work !
-                //     // Samplers
-                //     const positionIndex = prePassRenderer.getIndex(Constants.PREPASS_POSITION_TEXTURE_TYPE);
-                //     // const roughnessIndex = prePassRenderer.getIndex(Constants.PREPASS_REFLECTIVITY_TEXTURE_TYPE);
-                //     const normalIndex = prePassRenderer.getIndex(Constants.PREPASS_NORMAL_TEXTURE_TYPE);
-
-                //     effect.setTexture("normalSampler", prePassRenderer.getRenderTarget().textures[normalIndex]);
-                //     effect.setTexture("positionSampler", prePassRenderer.getRenderTarget().textures[positionIndex]);
-                //     // effect.setTexture("reflectivitySampler", prePassRenderer.getRenderTarget().textures[roughnessIndex]);
-                // }
-
-                const viewMatrix = camera.getViewMatrix(true);
-                const projectionMatrix = camera.getProjectionMatrix(true);
-
-                effect.setMatrix("projection", projectionMatrix);
-                effect.setMatrix("view", viewMatrix);
-
-                effect.setFloat("maxDistance", this.maxDistance);
-                effect.setFloat("resolution", this.resolution);
-                effect.setInt("steps", this.steps);
-                effect.setFloat("thickness", this.thickness);
-            };
-
-            this._isSceneRightHanded = scene.useRightHandedSystem;
+        if (!camera){
+            return;
         }
 
-        // recursive iteration over meshes
-        private iterateOverTheSceneMeshes(mesh : AbstractMesh, scene : Scene,
-                                          renderSpecularTarget : RenderTargetTexture,
-                                          renderMetallicTarget : RenderTargetTexture) {
-            // console.log(mesh.name + "    " + mesh.subMeshes.length);
-            this.computeSpecularMap(mesh, scene, renderSpecularTarget);
-            this.computeMetallicMap(mesh, scene, renderMetallicTarget);
-
-            if (mesh.getChildMeshes()) {
-                const subM = mesh.getChildMeshes();
-                for (let i = 0; i < subM.length; i++) {
-                    const m = subM[i];
-                    this.iterateOverTheSceneMeshes(m, scene, renderSpecularTarget, renderMetallicTarget);
-                }
-                return;
-            } else {
-                return;
+        // our own prePass
+        const renderSpecularTarget = new RenderTargetTexture("specular to texture", {height: engine.getRenderHeight(),  width: engine.getRenderWidth()}, scene);
+        scene.customRenderTargets.push(renderSpecularTarget);
+     
+        const renderMetallicTarget = new RenderTargetTexture("metallic to texture", {height: engine.getRenderHeight(),  width: engine.getRenderWidth()}, scene);
+        scene.customRenderTargets.push(renderMetallicTarget);
+        
+        // prePass
+        this._forceGeometryBuffer = forceGeometryBuffer;
+        this._forceGeometryBuffer = true; //forceGeometryBuffer;
+        if (this._forceGeometryBuffer) {
+            // Get geometry buffer renderer and update effect
+            const geometryBufferRenderer = scene.enableGeometryBufferRenderer();
+            if (geometryBufferRenderer) {
+                if (geometryBufferRenderer.isSupported) {
+                    geometryBufferRenderer.enablePosition = true;
+                } 
             }
         }
+        else { // doesn't work !
+            const prePassRenderer = scene.enablePrePassRenderer();
+            prePassRenderer?.markAsDirty();
+            this._prePassEffectConfiguration = new ScreenSpaceReflections2Configuration();
+        }
+            
+        scene.executeWhenReady(() => {
+            scene.meshes.forEach ((mesh) => {
+                this._iterateOverTheSceneMeshes(mesh, scene, renderSpecularTarget, renderMetallicTarget);
+            });    
+        });
+     
+        this._updateEffectDefines();      
 
-    /**
-     * Gets whether or not smoothing reflections is enabled.
-     * Enabling smoothing will require more GPU power and can generate a drop in FPS.
-     */
-    @serialize()
-    public get enableSmoothReflections(): boolean {
-        return this._enableSmoothReflections;
+        // On apply, send uniforms
+        this.onApply = (effect) => {
+
+            if (!this._prePassRenderer && !this._geometryBufferRenderer) {
+                return;
+            }
+
+            if (this._geometryBufferRenderer) {
+                // Samplers
+                const positionIndex = this._geometryBufferRenderer.getTextureIndex(GeometryBufferRenderer.POSITION_TEXTURE_TYPE);
+
+                effect.setTexture("normalSampler", this._geometryBufferRenderer!.getGBuffer().textures[1]);
+                effect.setTexture("positionSampler", this._geometryBufferRenderer!.getGBuffer().textures[positionIndex]);
+            }
+            else if (this._prePassRenderer) { // doesn't work !
+                // Samplers
+                const normalIndex = this._prePassRenderer.getIndex(Constants.PREPASS_NORMAL_TEXTURE_TYPE);
+                const positionIndex = this._prePassRenderer.getIndex(Constants.PREPASS_POSITION_TEXTURE_TYPE);
+
+                effect.setTexture("normalSampler", this._prePassRenderer.getRenderTarget().textures[normalIndex]);
+                effect.setTexture("positionSampler", this._prePassRenderer.getRenderTarget().textures[positionIndex]);
+            }
+               
+
+            effect.setTexture("specularMap", renderSpecularTarget); // pass the renderSpecularTarget as our second texture
+            effect.setTexture("metallicMap", renderMetallicTarget); // pass the renderMetallicTarget as our third texture
+
+            const viewMatrix = camera.getViewMatrix(true);
+            const projectionMatrix = camera.getProjectionMatrix(true);
+
+            const depthRenderer = scene.enableDepthRenderer();
+            effect.setTexture("depthSampler", depthRenderer.getDepthMap());
+
+            effect.setMatrix("projection", projectionMatrix);
+            effect.setMatrix("view", viewMatrix);
+
+            effect.setFloat("maxDistance", this.maxDistance);
+            effect.setFloat("resolution", this.resolution);
+            effect.setInt("steps", this.steps);
+            effect.setFloat("thickness", this.thickness);
+
+            effect.setFloat("minZ", camera.minZ);
+            effect.setFloat("maxZ", camera.maxZ);
+        };
+
+        this._isSceneRightHanded = scene.useRightHandedSystem;
     }
 
-    /**
-     * Sets whether or not smoothing reflections is enabled.
-     * Enabling smoothing will require more GPU power and can generate a drop in FPS.
-     */
-    public set enableSmoothReflections(enabled: boolean) {
-        if (enabled === this._enableSmoothReflections) {
+    // recursive iteration over meshes
+    private _iterateOverTheSceneMeshes(mesh : AbstractMesh, scene : Scene,
+                                        renderSpecularTarget : RenderTargetTexture,
+                                        renderMetallicTarget : RenderTargetTexture) {
+        this._computeSpecularMap(mesh, scene, renderSpecularTarget);
+        this._computeMetallicMap(mesh, scene, renderMetallicTarget);
+
+        if (mesh.getChildMeshes()) {
+            const subM = mesh.getChildMeshes();
+            for (let i = 0; i < subM.length; i++) {
+                const m = subM[i];
+                this._iterateOverTheSceneMeshes(m, scene, renderSpecularTarget, renderMetallicTarget);
+            }
+            return;
+        } else {
             return;
         }
-
-        this._enableSmoothReflections = enabled;
-        this._updateEffectDefines();
-    }
-
-    /**
-     * Gets the number of samples taken while computing reflections. More samples count is high,
-     * more the post-process wil require GPU power and can generate a drop in FPS. Basically in interval [25, 100].
-     */
-    @serialize()
-    public get reflectionSamples(): number {
-        return this._reflectionSamples;
-    }
-
-    /**
-     * Sets the number of samples taken while computing reflections. More samples count is high,
-     * more the post-process wil require GPU power and can generate a drop in FPS. Basically in interval [25, 100].
-     */
-    public set reflectionSamples(samples: number) {
-        if (samples === this._reflectionSamples) {
-            return;
-        }
-
-        this._reflectionSamples = samples;
-        this._updateEffectDefines();
-    }
-
-    /**
-     * Gets the number of samples taken while smoothing reflections. More samples count is high,
-     * more the post-process will require GPU power and can generate a drop in FPS.
-     * Default value (5.0) work pretty well in all cases but can be adjusted.
-     */
-    @serialize()
-    public get smoothSteps(): number {
-        return this._smoothSteps;
-    }
-
-    /*
-     * Sets the number of samples taken while smoothing reflections. More samples count is high,
-     * more the post-process will require GPU power and can generate a drop in FPS.
-     * Default value (5.0) work pretty well in all cases but can be adjusted.
-     */
-    public set smoothSteps(steps: number) {
-        if (steps === this._smoothSteps) {
-            return;
-        }
-
-        this._smoothSteps = steps;
-        this._updateEffectDefines();
     }
 
     private _updateEffectDefines(): void {
@@ -306,20 +237,14 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         if (this._geometryBufferRenderer || this._prePassRenderer) {
             defines.push("#define SSR_SUPPORTED");
         }
-        if (this._enableSmoothReflections) {
-            defines.push("#define ENABLE_SMOOTH_REFLECTIONS");
-        }
+
         if (this._isSceneRightHanded) {
             defines.push("#define RIGHT_HANDED_SCENE");
         }
 
-        defines.push("#define REFLECTION_SAMPLES " + (this._reflectionSamples >> 0));
-        defines.push("#define SMOOTH_STEPS " + (this._smoothSteps >> 0));
-
         this.updateEffect(defines.join("\n"));
     }
 
-    /** @hidden **/
     /**
      * 
      * @param parsedPostProcess 
@@ -329,182 +254,28 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
      * @returns 
      */
     public static _Parse(parsedPostProcess: any, targetCamera: Camera, scene: Scene, rootUrl: string) {
-        return SerializationHelper.Parse(() => {
-            return new ScreenSpaceReflection2PostProcess(
-                parsedPostProcess.name, scene,
-                parsedPostProcess.options, targetCamera, scene.getEngine(),
-                parsedPostProcess.renderTargetSamplingMode,
-                parsedPostProcess.textureType, parsedPostProcess.reusable);
-        }, parsedPostProcess, scene, rootUrl);
+        return SerializationHelper.Parse(
+            () => {
+                return new ScreenSpaceReflection2PostProcess(
+                    parsedPostProcess.name,
+                    scene,
+                    parsedPostProcess.options,
+                    targetCamera,
+                    scene.getEngine(),
+                    parsedPostProcess.renderTargetSamplingMode,
+                    parsedPostProcess.textureType,
+                    parsedPostProcess.reusable
+                );
+            },
+            parsedPostProcess,
+            scene,
+            rootUrl
+        );
     }
 
-    // public computeReflectivityMap(m: Mesh, scene: Scene) {
+    private _computeSpecularMap(m: AbstractMesh, scene: Scene, renderSpecularTarget : RenderTargetTexture) {
 
-    //     //var defines = []; // used in the fragment shader to compute the Occlusion-Roughness-Metallic-Reflectivity map
-    //     var defines: string[] = [];
-
-    //     let reflectivityMapShader = new ShaderMaterial(
-    //         "reflectivityMapShader",
-    //         scene,
-    //         {
-    //             vertex: "reflectivityMap",
-    //             fragment: "reflectivityMap",
-    //         },
-    //         {
-    //             attributes: ["position", "normal", "uv"],
-    //             uniforms: ["world", "worldView", "worldViewProjection", "view", "projection"],
-    //             defines : defines, // will be fill in according to given material data
-    //         },
-    //     )
-
-    //     if (m.material){ // there is a material
-
-    //         // for PBR materials: cf. https://doc.babylonjs.com/divingDeeper/materials/using/masterPBR
-    //         if(m.material instanceof PBRMetallicRoughnessMaterial){
-    //             // if it is a PBR material in MetallicRoughness Mode:
-    //             if(m.material.metallicRoughnessTexture){
-    //                 reflectivityMapShader.setTexture("ORMTexture", m.material.metallicRoughnessTexture);
-    //                 defines.push("#define ORMTEXTURE");
-    //             }
-    //             if(m.material.metallic){
-    //                 reflectivityMapShader.setFloat("metallic", m.material.metallic);
-    //                 defines.push("#define METALLIC");
-    //             }
-    //             if(m.material.roughness){
-    //                 reflectivityMapShader.setFloat("roughness", m.material.roughness);
-    //                 defines.push("#define ROUGHNESS");
-    //             }
-    //         }
-    //         else if (m.material instanceof PBRSpecularGlossinessMaterial){
-    //             // if it is a PBR material in Specular/Glossiness Mode:
-
-    //             //reflectivityMapShader.setTexture("specularGlossinessTexture", m.material.specularGlossinessTexture);
-    //             //defines.push("#define SPECULARGLOSSINESSTEXTURE");
-    //             if(m.material.specularGlossinessTexture){
-    //                 reflectivityMapShader.setTexture("specularGlossinessTexture", m.material.specularGlossinessTexture);
-    //                 defines.push("#define SPECULARGLOSSINESSTEXTURE");
-    //             } else {
-    //                 if(m.material.specularColor){
-    //                     reflectivityMapShader.setColor3("reflectivityColor", m.material.specularColor);
-    //                     defines.push("#define REFLECTIVITYCOLOR");
-    //                  }
-    //                 if(m.material.glossiness){
-    //                     reflectivityMapShader.setFloat("glossiness", m.material.glossiness);
-    //                     defines.push("#define GLOSSINESSS");
-    //                 }
-    //             }
-    //             if(m.material.occlusionTexture){
-    //                 reflectivityMapShader.setTexture("occlusionTexture", m.material.occlusionTexture);
-    //                 defines.push("#define OCCLUSIONTEXTURE");
-    //             }
-
-    //         }
-    //         else if(m.material instanceof PBRMaterial){
-    //             // if it is the bigger PBRMaterial
-    //             if(m.material.metallicTexture){
-    //                 reflectivityMapShader.setTexture("ORMTexture", m.material.metallicTexture);
-    //                 defines.push("#define ORMTEXTURE");
-    //             }
-    //             if(m.material.metallic){
-    //                 reflectivityMapShader.setFloat("metallic", m.material.metallic);
-    //                 defines.push("#define METALLIC");
-    //             }
-    //             if(m.material.roughness){
-    //                 reflectivityMapShader.setFloat("roughness", m.material.roughness);
-    //                 defines.push("#define ROUGHNESS");
-    //             }
-    //             if(m.material.reflectivityTexture){
-    //                 reflectivityMapShader.setTexture("reflectivityTexture", m.material.reflectivityTexture);
-    //                 defines.push("#define REFLECTIVITYTEXTURE");
-    //             }
-    //             if(m.material.ambientTexture){
-    //                 reflectivityMapShader.setTexture("occlusionTexture", m.material.ambientTexture);
-    //                 defines.push("#define OCCLUSIONTEXTURE");
-    //             }
-    //             if(m.material.reflectivityColor){
-    //                 reflectivityMapShader.setColor3("reflectivityColor", m.material.reflectivityColor);
-    //                 defines.push("#define REFLECTIVITYCOLOR");
-    //             }
-    //             if(m.material.microSurface){
-    //                 reflectivityMapShader.setFloat("glossiness", m.material.microSurface);
-    //                 defines.push("#define GLOSSINESSS");
-    //             }
-    //         }
-    //         else if(m.material instanceof StandardMaterial){
-    //             // if StandardMaterial:
-    //             // if specularTexture not null : use it to compute reflectivity
-    //             if(m.material.specularTexture){
-    //                 reflectivityMapShader.setTexture("reflectivityTexture", m.material.specularTexture);
-    //                 defines.push("#define REFLECTIVITYTEXTURE");
-    //             }
-    //             if(m.material.specularColor){
-    //                 reflectivityMapShader.setColor3("reflectivityColor", m.material.specularColor);
-    //                 defines.push("#define REFLECTIVITYCOLOR");
-    //             }
-
-    //             // else :
-    //                 // if Specular or Roughness : use it to compute reflectivity
-
-    //                 // else : not possible ?
-    //         }
-    //     }
-    //     m.material = reflectivityMapShader;
-    //     // if there is no material, nothing is binded and we return a totally black texture
-    // }
-// ********************************************* pre pass first version
-
-    // private prepassSpecularMetallic(scene : Scene, camera : Nullable<Camera>, engine : Engine){
-    //     var renderSpecularTarget = new RenderTargetTexture('specular to texture', 512, scene); // TODO change texture size
-    //     scene.customRenderTargets.push(renderSpecularTarget);
-
-    //     var renderMetallicTarget = new RenderTargetTexture('metallic to texture', 512, scene);
-    //     scene.customRenderTargets.push(renderMetallicTarget);
-
-    //     scene.meshes.forEach ((mesh) => {
-    //         this.computeSpecularMap(mesh, scene, renderSpecularTarget);
-    //         this.computeMetallicMap(mesh, scene, renderMetallicTarget);
-    //     })
-
-    //     // scene.meshes.forEach ((mesh) => {
-    //     //     this.computeSpecularMap(mesh, scene, renderSpecularTarget);
-    //     //     this.computeMetallicMap(mesh, scene, renderMetallicTarget);
-    //     //     while (mesh.subMeshes && mesh.subMeshes.length > 0) {
-    //     //         for (let i = 0; i < mesh.subMeshes.length ; i++){
-    //     //             mesh = mesh.subMeshes[i].getMesh();
-    //     //             this.computeSpecularMap(mesh, scene, renderSpecularTarget);
-    //     //             this.computeMetallicMap(mesh, scene, renderMetallicTarget);
-    //     //         }
-
-    //     //     }
-    //     // })
-    //     // for meshes in scene : computeSpecularMap(mesh, scene, renderSpecularTarget)
-    //     // for meshes in scene : computeSpecularMap(mesh, scene, renderSpecularTarget)
-
-    //     // console.log(renderSpecularTarget.renderList?.length);
-    //     // console.log(renderMetallicTarget.renderList?.length);
-    //     // TODO - creuser ca !!
-    //     // https://doc.babylonjs.com/divingDeeper/postProcesses/renderTargetTextureMultiPass
-
-    //     var finalPass = new PostProcess(
-    //         'Final compose shader',
-    //         'finalTest', // shader name
-    //         null, // attributes
-    //         [ 'specularMap', 'metallicMap' ], // textures
-    //         1.0,  // options
-    //         camera,
-    //         Texture.BILINEAR_SAMPLINGMODE, // sampling
-    //         engine // engine
-    //     );
-    //     finalPass.onApply = (effect) => {
-    //         effect.setTexture('specularMap', renderSpecularTarget); // pass the renderSpecularTarget as our second texture
-    //         effect.setTexture('metallicMap', renderMetallicTarget); // pass the renderMetallicTarget as our third texture
-    //     };
-    // }
-
-    private computeSpecularMap(m: AbstractMesh, scene: Scene, renderSpecularTarget : RenderTargetTexture) {
-
-        //var defines = []; // used in the fragment shader to compute the Occlusion-Roughness-Metallic-Reflectivity map
-        const defines: string[] = [];
+        const defines: string[] = []; 
 
         const specularMapShader = new ShaderMaterial(
             "specularMapShader",
@@ -525,10 +296,13 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             // for PBR materials: cf. https://doc.babylonjs.com/divingDeeper/materials/using/masterPBR
             if (m.material instanceof PBRMetallicRoughnessMaterial) {
                 // if it is a PBR material in MetallicRoughness Mode:
-                // console.log(m.name + " PBRMetallicRoughnessMaterial");
                 if (m.material.metallicRoughnessTexture != null) {
                     specularMapShader.setTexture("ORMTexture", m.material.metallicRoughnessTexture);
                     defines.push("#define ORMTEXTURE");
+                    specularMapShader.setFloat("specTexvScale", (m.material.metallicRoughnessTexture as Texture).vScale);
+                    specularMapShader.setFloat("specTexuScale", (m.material.metallicRoughnessTexture as Texture).uScale);
+                    specularMapShader.setFloat("specTexvOffset", (m.material.metallicRoughnessTexture as Texture).vOffset);
+                    specularMapShader.setFloat("specTexuOffset", (m.material.metallicRoughnessTexture as Texture).uOffset);
                 }
                 if (m.material.metallic != null) {
                     specularMapShader.setFloat("metallic", m.material.metallic);
@@ -541,6 +315,10 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 if (m.material.baseTexture != null) {
                     specularMapShader.setTexture("albedoTexture", m.material.baseTexture);
                     defines.push("#define ALBEDOTEXTURE");
+                    specularMapShader.setFloat("albedoTexvScale", (m.material.baseTexture as Texture).vScale);
+                    specularMapShader.setFloat("albedoTexuScale", (m.material.baseTexture as Texture).uScale);
+                    specularMapShader.setFloat("albedoTexvOffset", (m.material.baseTexture as Texture).vOffset);
+                    specularMapShader.setFloat("albedoTexuOffset", (m.material.baseTexture as Texture).uOffset);
                 } else if (m.material.baseColor != null) {
                     specularMapShader.setColor3("albedoColor", m.material.baseColor);
                     defines.push("#define ALBEDOCOLOR");
@@ -548,11 +326,15 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
 
             }
             else if (m.material instanceof PBRSpecularGlossinessMaterial) {
-                // console.log(m.name + " PBRSpecularGlossinessMaterial");
                 // if it is a PBR material in Specular/Glossiness Mode:
                 if (m.material.specularGlossinessTexture != null) {
                     specularMapShader.setTexture("specularGlossinessTexture", m.material.specularGlossinessTexture);
                     defines.push("#define SPECULARGLOSSINESSTEXTURE");
+                    specularMapShader.setFloat("specTexvScale", (m.material.specularGlossinessTexture as Texture).vScale);
+                    specularMapShader.setFloat("specTexuScale", (m.material.specularGlossinessTexture as Texture).uScale);
+                    specularMapShader.setFloat("specTexvOffset", (m.material.specularGlossinessTexture as Texture).vOffset);
+                    specularMapShader.setFloat("specTexuOffset", (m.material.specularGlossinessTexture as Texture).uOffset);
+
                 } else {
                     if (m.material.specularColor != null) {
                         specularMapShader.setColor3("reflectivityColor", m.material.specularColor);
@@ -563,18 +345,16 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                         defines.push("#define GLOSSINESSS");
                     }
                 }
-                // if (m.material.occlusionTexture != null) {
-                //     specularMapShader.setTexture("occlusionTexture", m.material.occlusionTexture);
-                //     defines.push("#define OCCLUSIONTEXTURE");
-                // }
-
             }
             else if (m.material instanceof PBRMaterial) {
-                // console.log(m.name + " PBRMaterial");
                 // if it is the bigger PBRMaterial
                 if (m.material.metallicTexture != null) {
                     specularMapShader.setTexture("ORMTexture", m.material.metallicTexture);
                     defines.push("#define ORMTEXTURE");
+                    specularMapShader.setFloat("specTexvScale", (m.material.metallicTexture as Texture).vScale);
+                    specularMapShader.setFloat("specTexuScale", (m.material.metallicTexture as Texture).uScale);
+                    specularMapShader.setFloat("specTexvOffset", (m.material.metallicTexture as Texture).vOffset);
+                    specularMapShader.setFloat("specTexuOffset", (m.material.metallicTexture as Texture).uOffset);
                 }
                 if (m.material.metallic != null) {
                     specularMapShader.setFloat("metallic", m.material.metallic);
@@ -586,10 +366,27 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                     defines.push("#define ROUGHNESS");
                 }
 
-                if (m.material.roughness === null && m.material.metallic === null && m.material.metallicTexture === null){ // SpecularGlossiness Model
+                if (m.material.roughness != null || m.material.metallic != null || m.material.metallicTexture != null){ // MetallicRoughness Model
+                    if (m.material.albedoTexture != null) {
+                        specularMapShader.setTexture("albedoTexture", m.material.albedoTexture);
+                        defines.push("#define ALBEDOTEXTURE");
+                        specularMapShader.setFloat("albedoTexvScale", (m.material.albedoTexture as Texture).vScale);
+                        specularMapShader.setFloat("albedoTexuScale", (m.material.albedoTexture as Texture).uScale);
+                        specularMapShader.setFloat("albedoTexvOffset", (m.material.albedoTexture as Texture).vOffset);
+                        specularMapShader.setFloat("albedoTexuOffset", (m.material.albedoTexture as Texture).uOffset);
+                    } else if (m.material.albedoColor != null) {
+                        specularMapShader.setColor3("albedoColor", m.material.albedoColor);
+                        defines.push("#define ALBEDOCOLOR");
+                    }
+
+                } else { // SpecularGlossiness Model
                     if (m.material.reflectivityTexture != null) {
                         specularMapShader.setTexture("specularGlossinessTexture", m.material.reflectivityTexture);
                         defines.push("#define SPECULARGLOSSINESSTEXTURE");
+                        specularMapShader.setFloat("specTexvScale", (m.material.reflectivityTexture as Texture).vScale);
+                        specularMapShader.setFloat("specTexuScale", (m.material.reflectivityTexture as Texture).uScale);
+                        specularMapShader.setFloat("specTexvOffset", (m.material.reflectivityTexture as Texture).vOffset);
+                        specularMapShader.setFloat("specTexuOffset", (m.material.reflectivityTexture as Texture).uOffset);
                     } else if (m.material.reflectivityColor != null) {
                         specularMapShader.setColor3("reflectivityColor", m.material.reflectivityColor);
                         defines.push("#define REFLECTIVITYCOLOR");
@@ -598,28 +395,18 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                         specularMapShader.setFloat("glossiness", m.material.microSurface);
                         defines.push("#define GLOSSINESSS");
                     }
-                } else { // MetallicRoughness Model
-                    if (m.material.albedoTexture != null) {
-                        specularMapShader.setTexture("albedoTexture", m.material.albedoTexture);
-                        defines.push("#define ALBEDOTEXTURE");
-                    } else if (m.material.albedoColor != null) {
-                        specularMapShader.setColor3("albedoColor", m.material.albedoColor);
-                        defines.push("#define ALBEDOCOLOR");
-                    }
                 }    
-                // if (m.material.ambientTexture != null) {
-                //     specularMapShader.setTexture("occlusionTexture", m.material.ambientTexture);
-                //     defines.push("#define OCCLUSIONTEXTURE");
-                // }
             }
             else if (m.material instanceof StandardMaterial) {
-                // console.log(m.name + " StandardMaterial");
-
                 // if StandardMaterial:
                 // if specularTexture not null : use it to compute reflectivity
                 if (m.material.specularTexture != null) {
                     specularMapShader.setTexture("reflectivityTexture", m.material.specularTexture);
                     defines.push("#define REFLECTIVITYTEXTURE");
+                    specularMapShader.setFloat("specTexvScale", (m.material.specularTexture as Texture).vScale);
+                    specularMapShader.setFloat("specTexuScale", (m.material.specularTexture as Texture).uScale);
+                    specularMapShader.setFloat("specTexvOffset", (m.material.specularTexture as Texture).vOffset);
+                    specularMapShader.setFloat("specTexuOffset", (m.material.specularTexture as Texture).uOffset);
                 }
                 if (m.material.specularColor != null) {
                     specularMapShader.setColor3("reflectivityColor", m.material.specularColor);
@@ -630,16 +417,12 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                     // not possible ?
             }
         }
-        // if there is no material, nothing is binded and we return a totally white texture
-
         renderSpecularTarget.setMaterialForRendering(m, specularMapShader);
         renderSpecularTarget.renderList?.push(m);
-        //m.material = specularMapShader;
     }
+    
+    private _computeMetallicMap(m: AbstractMesh, scene: Scene, renderMetallicTarget : RenderTargetTexture) {
 
-    private computeMetallicMap(m: AbstractMesh, scene: Scene, renderMetallicTarget : RenderTargetTexture) {
-
-        //var defines = []; // used in the fragment shader to compute the Occlusion-Roughness-Metallic-Reflectivity map
         const defines: string[] = [];
 
         const metallicMapShader = new ShaderMaterial(
@@ -660,11 +443,14 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
 
             // for PBR materials: cf. https://doc.babylonjs.com/divingDeeper/materials/using/masterPBR
             if (m.material instanceof PBRMetallicRoughnessMaterial) {
-                // console.log(m.name + " PBRMetallicRoughnessMaterial");
                 // if it is a PBR material in MetallicRoughness Mode:
                 if (m.material.metallicRoughnessTexture != null) {
                     metallicMapShader.setTexture("ORMTexture", m.material.metallicRoughnessTexture);
                     defines.push("#define ORMTEXTURE");
+                    metallicMapShader.setFloat("metallicTexvScale", (m.material.metallicRoughnessTexture as Texture).vScale);
+                    metallicMapShader.setFloat("metallicTexuScale", (m.material.metallicRoughnessTexture as Texture).uScale);
+                    metallicMapShader.setFloat("metallicTexvOffset", (m.material.metallicRoughnessTexture as Texture).vOffset);
+                    metallicMapShader.setFloat("metallicTexuOffset", (m.material.metallicRoughnessTexture as Texture).uOffset);
                 }
                 if (m.material.metallic != null) {
                     metallicMapShader.setFloat("metallic", m.material.metallic);
@@ -672,12 +458,14 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 }
             }
             else if (m.material instanceof PBRMaterial) {
-                // console.log(m.name + " PBRMaterial");
-
                 // if it is the bigger PBRMaterial
                 if (m.material.metallicTexture != null) {
                     metallicMapShader.setTexture("ORMTexture", m.material.metallicTexture);
                     defines.push("#define ORMTEXTURE");
+                    metallicMapShader.setFloat("metallicTexvScale", (m.material.metallicTexture as Texture).vScale);
+                    metallicMapShader.setFloat("metallicTexuScale", (m.material.metallicTexture as Texture).uScale);
+                    metallicMapShader.setFloat("metallicTexvOffset", (m.material.metallicTexture as Texture).vOffset);
+                    metallicMapShader.setFloat("metallicTexuOffset", (m.material.metallicTexture as Texture).uOffset);
                 }
                 if (m.material.metallic != null) {
                     metallicMapShader.setFloat("metallic", m.material.metallic);
@@ -688,13 +476,13 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                     defines.push("#define INDEXOFREFRACTION");
                 }
             }
+            // if there is no metallic component, nothing is binded and we return a totally black texture
+    
+            renderMetallicTarget.setMaterialForRendering(m, metallicMapShader);
+            renderMetallicTarget.renderList?.push(m);
         }
-        // if there is no metallic component, nothing is binded and we return a totally black texture
-
-        renderMetallicTarget.setMaterialForRendering(m, metallicMapShader);
-        renderMetallicTarget.renderList?.push(m);
-        // m.material = metallicMapShader;
     }
 }
+
 
 RegisterClass("BABYLON.ScreenSpaceReflection2PostProcess", ScreenSpaceReflection2PostProcess);

@@ -3,6 +3,11 @@ uniform sampler2D ORMTexture;
 uniform float metallic;
 uniform float indexOfRefraction;
 
+uniform float metallicTexuScale;
+uniform float metallicTexvScale;
+uniform float metallicTexuOffset;
+uniform float metallicTexvOffset;
+
 varying vec2 vUV;
 
 //#include<helperFunctions>
@@ -14,7 +19,8 @@ void main(void) { // we compute Specularity in .rgb  and shininess in .a
         // pbr.useRoughnessFromMetallicTextureAlpha = false;
         // pbr.useRoughnessFromMetallicTextureGreen = true;
         // pbr.useMetallnessFromMetallicTextureBlue = true;
-        float metal = texture2D(ORMTexture, vUV).b;
+        vec2 metallicUV = mod(vUV, 1.0) * vec2(metallicTexuScale, metallicTexvScale) + vec2(metallicTexuOffset, metallicTexvOffset);
+        float metal = texture2D(ORMTexture, metallicUV).b;
 
         #ifdef METALLIC
             metal *= metallic;

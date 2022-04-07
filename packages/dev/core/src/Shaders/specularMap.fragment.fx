@@ -4,6 +4,16 @@ uniform sampler2D albedoTexture;
 uniform sampler2D specularGlossinessTexture;
 uniform sampler2D occlusionTexture;
 
+uniform float specTexuScale;
+uniform float specTexvScale;
+uniform float specTexuOffset;
+uniform float specTexvOffset;
+
+uniform float albedoTexuScale;
+uniform float albedoTexvScale;
+uniform float albedoTexuOffset;
+uniform float albedoTexvOffset;
+
 uniform vec3 reflectivityColor;
 uniform vec3 albedoColor;
 
@@ -13,8 +23,6 @@ uniform float glossiness;
 
 varying vec2 vUV;
 
-//#include<helperFunctions>
-
 void main(void) { // we compute Specularity in .rgb  and shininess in .a
 
     #ifdef ORMTEXTURE
@@ -22,7 +30,9 @@ void main(void) { // we compute Specularity in .rgb  and shininess in .a
         // pbr.useRoughnessFromMetallicTextureAlpha = false;
         // pbr.useRoughnessFromMetallicTextureGreen = true;
         // pbr.useMetallnessFromMetallicTextureBlue = true;
-        float metal = texture2D(ORMTexture, vUV).b;
+        vec2 specUV = mod(vUV, 1.0) * vec2(specTexuScale, specTexvScale) + vec2(specTexuOffset, specTexvOffset);
+
+        float metal = texture2D(ORMTexture, specUV).b;
 
         #ifdef METALLIC
             metal *= metallic;
@@ -32,21 +42,22 @@ void main(void) { // we compute Specularity in .rgb  and shininess in .a
         gl_FragColor.g = metal;  
         gl_FragColor.b = metal; 
 
-        gl_FragColor.a = texture2D(ORMTexture, vUV).g;
+        gl_FragColor.a = texture2D(ORMTexture, specUV).g;
 
         #ifdef ROUGHNESS
             gl_FragColor.a *= roughness;
         #endif
         
         #ifdef ALBEDOTEXTURE // Specularity should be: metallic * albedoTexture:
-            gl_FragColor.r *= texture2D(albedoTexture, vUV).r; 
-            gl_FragColor.g *= texture2D(albedoTexture, vUV).g;  
-            gl_FragColor.b *= texture2D(albedoTexture, vUV).b; 
+            vec2 albedoUV = mod(vUV, 1.0) * vec2(albedoTexuScale, albedoTexvScale) + vec2(albedoTexuOffset, albedoTexvOffset);
+            gl_FragColor.r *= texture2D(albedoTexture, albedoUV).r; 
+            gl_FragColor.g *= texture2D(albedoTexture, albedoUV).g;  
+            gl_FragColor.b *= texture2D(albedoTexture, albedoUV).b; 
         #else
-            #ifdef ALBEDOCOLOR : // Specularity should be: metallic * albedoColor:
+            #ifdef ALBEDOCOLOR // Specularity should be: metallic * albedoColor:
                 gl_FragColor.r *= albedoColor.x; 
                 gl_FragColor.g *= albedoColor.y;  
-                gl_FragColor.b *= albedoColor.z;   
+                gl_FragColor.b *= albedoColor.z;  
             // else : albedo color suposed to be white   
             #endif          
         #endif
@@ -62,15 +73,17 @@ void main(void) { // we compute Specularity in .rgb  and shininess in .a
             #else 
                 gl_FragColor.a = 1.0;
             #endif    
+
             #ifdef ALBEDOTEXTURE // Specularity should be: metallic * albedoTexture:
-                gl_FragColor.r *= texture2D(albedoTexture, vUV).r; 
-                gl_FragColor.g *= texture2D(albedoTexture, vUV).g;  
-                gl_FragColor.b *= texture2D(albedoTexture, vUV).b; 
+                vec2 albedoUV = mod(vUV, 1.0) * vec2(albedoTexuScale, albedoTexvScale) + vec2(albedoTexuOffset, albedoTexvOffset);
+                gl_FragColor.r *= texture2D(albedoTexture, albedoUV).r; 
+                gl_FragColor.g *= texture2D(albedoTexture, albedoUV).g;  
+                gl_FragColor.b *= texture2D(albedoTexture, albedoUV).b; 
             #else
-                #ifdef ALBEDOCOLOR : // Specularity should be: metallic * albedoColor:
+                #ifdef ALBEDOCOLOR // Specularity should be: metallic * albedoColor:
                     gl_FragColor.r *= albedoColor.x; 
                     gl_FragColor.g *= albedoColor.y;  
-                    gl_FragColor.b *= albedoColor.z;   
+                    gl_FragColor.b *= albedoColor.z;     
                 // else : albedo color suposed to be white   
                 #endif          
             #endif
@@ -86,34 +99,35 @@ void main(void) { // we compute Specularity in .rgb  and shininess in .a
                     gl_FragColor.g *= texture2D(albedoTexture, vUV).g;  
                     gl_FragColor.b *= texture2D(albedoTexture, vUV).b; 
                 #else
-                    #ifdef ALBEDOCOLOR : // Specularity should be: metallic * albedoColor:
+                    #ifdef ALBEDOCOLOR // Specularity should be: metallic * albedoColor:
                         gl_FragColor.r *= albedoColor.x; 
                         gl_FragColor.g *= albedoColor.y;  
                         gl_FragColor.b *= albedoColor.z;   
                     // else : albedo color suposed to be white   
                     #endif          
                 #endif
-
             #else // SpecularGlossiness  Model 
                 #ifdef SPECULARGLOSSINESSTEXTURE
-                    gl_FragColor.rgb = texture2D(specularGlossinessTexture, vUV).rbg; 
-                    gl_FragColor.a = 1.0 - texture2D(specularGlossinessTexture, vUV).a; // roughness = 1.0 - glossiness
+                    vec2 specUV = mod(vUV, 1.0) * vec2(specTexuScale, specTexvScale) + vec2(specTexuOffset, specTexvOffset);
+                    gl_FragColor.rgb = texture2D(specularGlossinessTexture, specUV).rbg; 
+                    gl_FragColor.a = 1.0 - texture2D(specularGlossinessTexture, specUV).a; // roughness = 1.0 - glossiness
                     #ifdef GLOSSINESSS
                         gl_FragColor.a = gl_FragColor.a * glossiness; 
                     #endif
                 #else 
                     #ifdef REFLECTIVITYTEXTURE 
-                        gl_FragColor.rbg = texture2D(reflectivityTexture, vUV).rbg;
+                        vec2 specUV = mod(vUV, 1.0) * vec2(specTexuScale, specTexvScale) + vec2(specTexuOffset, specTexvOffset);
+                        gl_FragColor.rbg = texture2D(reflectivityTexture, specUV).rbg;
                     #else    
                         #ifdef REFLECTIVITYCOLOR
                             gl_FragColor.rgb = reflectivityColor.xyz;
-                            gl_FragColor.a = dot(reflectivityColor.xyz, vec3(1)) / 3.0;
+                            gl_FragColor.a = 0.0;
                             // by default we put the shininess to the mean of specular values
                             // if it is not a StandardMaterial, the shininess will be next defined according to the roughness/glossiness
                         #else 
                             // We never reach this case since even if the reflectivity color is not defined
                             // by the user, there is a default reflectivity/specular color set to (1.0, 1.0, 1.0)
-                            gl_FragColor.rgba = vec4(1.0, 1.0, 1.0, 1.0);            
+                            gl_FragColor.rgba = vec4(1.0, 1.0, 1.0, 0.0);            
                         #endif          
                     #endif 
                     #ifdef GLOSSINESSS
@@ -124,6 +138,6 @@ void main(void) { // we compute Specularity in .rgb  and shininess in .a
                 #endif
             #endif    
         #endif   
-    #endif
+    #endif   
     gl_FragColor.a = 1.0 - gl_FragColor.a; // to return shininess insted of roughness
 }

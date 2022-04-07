@@ -1,10 +1,9 @@
 import { Constants } from "../Engines/constants";
 import { PrePassEffectConfiguration } from "./prePassEffectConfiguration";
-import { _WarnImport } from '../Misc/devTools';
 
 /**
  * Contains all parameters needed for the prepass to perform
- * screen space reflections
+ * screen space reflections v2
  */
 export class ScreenSpaceReflections2Configuration implements PrePassEffectConfiguration {
     /**
@@ -23,5 +22,7 @@ export class ScreenSpaceReflections2Configuration implements PrePassEffectConfig
     public readonly texturesRequired: number[] = [
         Constants.PREPASS_NORMAL_TEXTURE_TYPE,
         Constants.PREPASS_POSITION_TEXTURE_TYPE,
+        // Constants.PREPASS_REFLECTIVITY_TEXTURE_TYPE,
+        // Constants.PREPASS_DEPTH_TEXTURE_TYPE,
     ];
 }
