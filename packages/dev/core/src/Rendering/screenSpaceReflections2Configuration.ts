@@ -22,7 +22,5 @@ export class ScreenSpaceReflections2Configuration implements PrePassEffectConfig
     public readonly texturesRequired: number[] = [
         Constants.PREPASS_NORMAL_TEXTURE_TYPE,
         Constants.PREPASS_POSITION_TEXTURE_TYPE,
-        // Constants.PREPASS_REFLECTIVITY_TEXTURE_TYPE,
-        // Constants.PREPASS_DEPTH_TEXTURE_TYPE,
     ];
 }

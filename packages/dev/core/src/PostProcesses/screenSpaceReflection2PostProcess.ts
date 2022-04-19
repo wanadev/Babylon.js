@@ -139,6 +139,29 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         const renderMetallicTarget = new RenderTargetTexture("metallic to texture", {height: engine.getRenderHeight(),  width: engine.getRenderWidth()}, scene);
         scene.customRenderTargets.push(renderMetallicTarget);
         
+        scene.meshes.forEach ((mesh) => {
+            this._iterateOverTheSceneMeshes(mesh, scene, renderSpecularTarget, renderMetallicTarget);
+        })   
+
+        this._scene.onNewMeshAddedObservable.add( (newMesh) => {
+            this._iterateOverTheSceneMeshes(newMesh, scene, renderSpecularTarget, renderMetallicTarget);
+        })
+        
+        this._scene.onMeshRemovedObservable.add( (mesh) => {
+            if(renderSpecularTarget.renderList) {
+                const idxSpec = renderSpecularTarget.renderList.indexOf(mesh);
+                if (idxSpec != -1){
+                    renderSpecularTarget.renderList?.splice(idxSpec, 1);
+                }
+            }
+            if(renderMetallicTarget.renderList){
+                const idxMetal = renderMetallicTarget.renderList.indexOf(mesh);
+                if (idxMetal != -1){
+                    renderMetallicTarget.renderList?.splice(idxMetal, 1);
+                }  
+            }
+        })
+
         // prePass
         this._forceGeometryBuffer = forceGeometryBuffer;
         this._forceGeometryBuffer = true; //forceGeometryBuffer;
@@ -156,13 +179,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             prePassRenderer?.markAsDirty();
             this._prePassEffectConfiguration = new ScreenSpaceReflections2Configuration();
         }
-            
-        scene.executeWhenReady(() => {
-            scene.meshes.forEach ((mesh) => {
-                this._iterateOverTheSceneMeshes(mesh, scene, renderSpecularTarget, renderMetallicTarget);
-            });    
-        });
-     
+                 
         this._updateEffectDefines();      
 
         // On apply, send uniforms
@@ -213,23 +230,62 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         this._isSceneRightHanded = scene.useRightHandedSystem;
     }
 
+    private _whenAllReady (mesh : AbstractMesh, resolve : any) {
+       
+        if (mesh.isReady()) {
+            resolve();
+            return;
+        } else {
+            mesh.onReady = () => resolve(); 
+        }
+    }
+  
+
+    private _whenAbsMeshReady (mesh : AbstractMesh) {
+        return new Promise((resolve : any, reject : any) => {
+             
+            this._whenAllReady(mesh, () => resolve());
+            // we need to do something here to make sure the texture are loaded before calling resolve
+        })
+    }
+
     // recursive iteration over meshes
     private _iterateOverTheSceneMeshes(mesh : AbstractMesh, scene : Scene,
                                         renderSpecularTarget : RenderTargetTexture,
                                         renderMetallicTarget : RenderTargetTexture) {
-        this._computeSpecularMap(mesh, scene, renderSpecularTarget);
-        this._computeMetallicMap(mesh, scene, renderMetallicTarget);
 
-        if (mesh.getChildMeshes()) {
-            const subM = mesh.getChildMeshes();
-            for (let i = 0; i < subM.length; i++) {
-                const m = subM[i];
-                this._iterateOverTheSceneMeshes(m, scene, renderSpecularTarget, renderMetallicTarget);
+        this._whenAbsMeshReady(mesh).then(() => {
+            this._computeSpecularMap(mesh, scene, renderSpecularTarget);
+            this._computeMetallicMap(mesh, scene, renderMetallicTarget);
+            // this._computeReflectionMap(mesh, scene, renderReflectionTarget);
+            
+            mesh.onMaterialChangedObservable.add(() => {
+                const idxSpec = renderSpecularTarget.renderList?.indexOf(mesh);
+                if (idxSpec && idxSpec != -1){
+                    renderSpecularTarget.renderList?.splice(idxSpec, 1);
+                }
+                const idxMetal = renderMetallicTarget.renderList?.indexOf(mesh);
+                if (idxMetal && idxMetal != -1){
+                    renderMetallicTarget.renderList?.splice(idxMetal, 1);
+                }
+                this._whenAbsMeshReady(mesh).then(() => {
+                    this._computeSpecularMap(mesh, scene, renderSpecularTarget);
+                    this._computeMetallicMap(mesh, scene, renderMetallicTarget);
+                    // this._computeReflectionMap(mesh, scene, renderReflectionTarget);
+                })
+            })
+            
+            if (mesh.getChildMeshes()) {
+                const subM = mesh.getChildMeshes();
+                for (let i = 0; i < subM.length; i++) {
+                    const m = subM[i];
+                    this._iterateOverTheSceneMeshes(m, scene, renderSpecularTarget, renderMetallicTarget);
+                    return;
+                }
+            } else {
+                return;
             }
-            return;
-        } else {
-            return;
-        }
+        })    
     }
 
     private _updateEffectDefines(): void {
@@ -340,10 +396,10 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                         specularMapShader.setColor3("reflectivityColor", m.material.specularColor);
                         defines.push("#define REFLECTIVITYCOLOR");
                      }
-                    if (m.material.glossiness != null) {
-                        specularMapShader.setFloat("glossiness", m.material.glossiness);
-                        defines.push("#define GLOSSINESSS");
-                    }
+                }
+                if (m.material.glossiness != null) {
+                    specularMapShader.setFloat("glossiness", m.material.glossiness);
+                    defines.push("#define GLOSSINESSS");
                 }
             }
             else if (m.material instanceof PBRMaterial) {

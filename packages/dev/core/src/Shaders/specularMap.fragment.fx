@@ -112,7 +112,7 @@ void main(void) { // we compute Specularity in .rgb  and shininess in .a
                     gl_FragColor.rgb = texture2D(specularGlossinessTexture, specUV).rbg; 
                     gl_FragColor.a = 1.0 - texture2D(specularGlossinessTexture, specUV).a; // roughness = 1.0 - glossiness
                     #ifdef GLOSSINESSS
-                        gl_FragColor.a = gl_FragColor.a * glossiness; 
+                        gl_FragColor.a = 1.0 - (texture2D(specularGlossinessTexture, specUV).a * glossiness); 
                     #endif
                 #else 
                     #ifdef REFLECTIVITYTEXTURE 
