@@ -4,12 +4,22 @@
 
 uniform sampler2D textureSampler;
 
+#ifdef SSR_PIPELINE
+uniform sampler2D originalColor;
+uniform sampler2D blurColor;
+#endif
+
 // #ifdef SSR_SUPPORTED
 uniform sampler2D normalSampler;
 uniform sampler2D positionSampler;
 uniform sampler2D specularMap;
 uniform sampler2D metallicMap;
 uniform sampler2D depthSampler;
+// uniform vec3 cameraPos;
+
+#ifdef BACKUP_TEXTURE
+    uniform samplerCube backUpSampler;
+#endif
 
 // #endif
 
@@ -36,6 +46,7 @@ varying vec2 vUV;
 struct ReflectionInfo {
     float visibility;
     vec2 coords;
+    bool miss;
 };
 
 // Fresnel Schlicks formula according to wikipedia
@@ -72,14 +83,6 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
 
     // ************************************************************************************
 
-    // info.coords = clamp(startSS.xy/texSize, 0.0, 1.0);
-    // // info.coords = clamp(uv, 0.0, 1.0);
-    // // info.visibility = 0.0;
-    // info.visibility = 1.0;
-    // return info;
-
-    // ************************************************************************************
-
     // compute delta difference between X and Y coordinates
     // will be used to for ray marching in screen space 
     float deltaX = endSS.x - startSS.x;
@@ -103,8 +106,6 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     float hit0 = 0.0;
     float hit1 = 0.0;
 
-    // TODO : use depth buffer instead of depthAtCurrPosVS
-    // TODO : test if rightHanded or leftHanded 
     float viewDistance = startVS.z; // distance between the camera and the start point in view space
     float depth = thickness;
 
@@ -129,12 +130,11 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
         // perspective-correct interpolation
         viewDistance = (startVS.z * endVS.z) / mix(endVS.z, startVS.z, search1);
         
+        #ifdef RIGHT_HANDED_SCENE
+            viewDistance *= -1.0;
+        #endif
         // difference between the perspective-correct interpolation and the current depth of the scene
         depth = viewDistance - depthAtCurrPosVS;
-
-        #ifdef RIGHT_HANDED_SCENE
-            depth *= -1.0;
-        #endif
 
         if (depth > 0.0 && depth < thickness) {
             // intersection
@@ -153,7 +153,14 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     
     if (hit0 == 0.0){ // if no hit during the first pass, we skip the second pass
         info.coords = uv;
+        // info.visibility = 0.0;
+        info.miss = true;
         info.visibility = 0.0;
+        #ifdef BACKUP_TEXTURE
+            info.visibility = 0.5;
+        #else
+            info.visibility = 0.0; 
+        #endif
         return info;
     }
 
@@ -169,12 +176,10 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
         // depthAtCurrPosVS = (view * texture2D(positionSampler, uv.xy)).z; // equivalent to the previous line
 
         viewDistance = (startVS.z * endVS.z) / mix(endVS.z, startVS.z, search1);
-
-        depth = viewDistance - depthAtCurrPosVS;
-
         #ifdef RIGHT_HANDED_SCENE
-            depth *= -1.0;
+            viewDistance *= -1.0;
         #endif
+        depth = viewDistance - depthAtCurrPosVS;
 
         if (depth > 0.0 && depth < thickness) {
             hit1 = 1.0;
@@ -186,10 +191,8 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
         }
     }    
     // end of the second pass
-    
-   
+       
     // compute how much the reflection is visible
-
     float visibility;
     if (hit1 == 1.0){ // no hit => no reflected value
         visibility = texture2D(positionSampler, uv).w // alpha value of the reflected scene position 
@@ -200,8 +203,15 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
             * (uv.x < 0.0 || uv.x > 1.0 ? 0.0 : 1.0) // test if the reflected ray is ou of bounds
             * (uv.y < 0.0 || uv.y > 1.0 ? 0.0 : 1.0);
         // visibility = 1.0;
+        info.miss = false;
     } else {
-        visibility = 1.0; 
+        #ifdef BACKUP_TEXTURE
+            visibility = 0.5;
+        #else
+            visibility = 0.0; 
+        #endif
+        visibility = 0.0; 
+        info.miss = true;
     }
 
     info.coords = uv;
@@ -218,20 +228,42 @@ vec3 hash(vec3 a)
     a += dot(a, a.yxz + 19.19);
     return fract((a.xxy + a.yxx) * a.zyx);
 }
-
-// vec3 deviation(float roughness, float hashValue){
-//     return 
-// }
        
 void main(void)
 {
-    // float depth = texture2D(depthSampler, vUV).r;
+    // float depth = ((texture2D(depthSampler, vUV).r) * (maxZ - minZ) + minZ)/maxZ;
+    // // float depth = (texture2D(depthSampler, vUV).r);
     // gl_FragColor = vec4(depth, depth, depth, 1.0);
     // return; // just for test
 
-    // #ifdef SSR_SUPPORTED
+    // float depth = ((texture2D(depthSampler, vUV).r) * (maxZ - minZ) + minZ)/maxZ;
+    // float depth = (texture2D(depthSampler, vUV).r);
+    // gl_FragColor = vec4(texture2D(positionSampler, vUV).xyz,1.0);
+    // return; // just for test
+
+    // #ifdef BACKUP_TEXTURE
+    //     gl_FragColor = textureCube(backUpSampler, vUV);
+    //     // gl_FragColor = texture2D(metallicMap, vUV);
+    // // #else 
+    // //     gl_FragColor = texture2D(specularMap, vUV);
+    //     return;    
+    // #endif 
+
+    // gl_FragColor = texture2D(originalColor, vUV);
+    // return;   
+
+    #ifdef SSR_SUPPORTED
     // Intensity
-    vec4 albedoFull = texture2D(textureSampler, vUV);
+
+
+    #ifdef SSR_PIPELINE
+        vec4 albedoFull = texture2D(originalColor, vUV);
+    #else 
+        vec4 albedoFull = texture2D(textureSampler, vUV);
+    //     vec4 blur = texture2D(blurColor, vUV);
+    #endif
+
+    // vec4 albedoFull = texture2D(textureSampler, vUV);
     vec3 albedo = albedoFull.rgb;
     vec3 spec = texture2D(specularMap, vUV).rgb;
     float metallic = texture2D(metallicMap, vUV).b;
@@ -253,35 +285,61 @@ void main(void)
     vec3 unitPosition = normalize(position);
 
     vec3 reflected = normalize(reflect(unitPosition, unitNormal));
-
+    
     // vec2 texSize = texture2D(positionSampler, 1.0).xy; // doesn't work
     vec2 texSize = gl_FragCoord.xy / vUV; // works
 
     // vec3 jitt = mix(vec3(0.0), hash(position), roughness);
     // vec3 jitt = mix(vec3(0.0), hash(position), 0.3 * roughness);
-    vec3 jitt = mix(vec3(0.0), hash(position), 0.1 * roughness);
 
-    ReflectionInfo info = getReflectionInfo2DRayMarching(reflected + jitt, position, texSize);
+    #ifdef SSR_PIPELINE
+        vec3 jitt = mix(vec3(0.0), hash(position), 0.0005 * roughness);
+        ReflectionInfo info = getReflectionInfo2DRayMarching(reflected + jitt, position, texSize);
+        // ReflectionInfo info = getReflectionInfo2DRayMarching(reflected, position, texSize);
+    #else    
+        vec3 jitt = mix(vec3(0.0), hash(position), 0.1 * roughness);
+        ReflectionInfo info = getReflectionInfo2DRayMarching(reflected + jitt, position, texSize);
+    #endif
+
     float visibility = clamp(info.visibility, 0.0, 1.0);      
 
+    vec3 reflectedColor = vec3(1.0, 1.0, 1.0);
     // get the color of the reflection
-    vec3 reflectedColor = texture2D(textureSampler, info.coords).xyz;
+    #ifdef SSR_PIPELINE
+        reflectedColor = mix(texture2D(originalColor, info.coords).xyz, texture2D(blurColor, info.coords).xyz, roughness);
+        // vec3 reflectedColor = texture2D(blurColor, info.coords).xyz;
+    #else    
+        #ifdef BACKUP_TEXTURE
+        if (info.miss){
+            vec3 jitt = mix(vec3(0.0), hash(position), 0.1 * roughness);
+            // compute reflection in view space and then come back to world space
+            vec3 coord = vec3( inverse(view) * vec4(reflected, 0.0));
+            #ifdef RIGHT_HANDED_SCENE
+                coord.z *= -1.0;
+            #endif
+            reflectedColor = textureCube(backUpSampler, coord + jitt).xyz;
+
+        } else {
+            reflectedColor = texture2D(textureSampler, info.coords).xyz;
+        }
+        #else 
+            reflectedColor = texture2D(textureSampler, info.coords).xyz;
+        #endif 
+    #endif
 
 
     vec2 dCoords = smoothstep(0.2, 0.6, abs(vec2(0.5, 0.5) - info.coords.xy));
     float screenEdgefactor = clamp(1.0 - (dCoords.x + dCoords.y), 0.0, 1.0);
     
-    // Fresnel F0
-    // vec3 F0 = vec3(0.04); // TODO change that for metallic components
-    // F0 = mix(F0, albedo, spec);
+    /// Fresnel F0
+    vec3 F0 = vec3(0.04); // TODO change that for metallic components
+    F0 = mix(F0, albedo, spec);
     // F0 = mix(F0, spec, metallic);
 
-    vec3 F0;
+    // vec3 F0;
     if(metallic != 0.0){
         F0 = spec;
-    } else {
-        F0 = vec3(0.04);
-    }
+    } 
 
     // Reflection coefficient
     #ifdef RIGHT_HANDED_SCENE
@@ -289,9 +347,10 @@ void main(void)
     #endif
 
     vec3 reflectionCoeff = fresnelSchlick(max(dot(unitNormal, unitPosition), 0.0), F0)
-                            // * spec
+                            // * spec 
+                            // * screenEdgefactor
                             * visibility
-                            * clamp(spec * screenEdgefactor * reflected.z, 0.0, 0.9);
+                            * clamp(spec * screenEdgefactor, 0.0, 0.9);
 
     // Apply
     // float reflectionPart = clamp(pow(spec, reflectionSpecularFalloffExponent) 
@@ -320,6 +379,13 @@ void main(void)
     // (no refraction) and (AbsorbtionCoeff + RefractionCoeff + ReflectionCoeff = 1)  => AbsorbtionCoeff = 1 - ReflectionCoeff
     gl_FragColor = vec4((albedo * (vec3(1.0) - reflectionCoeff)) + (reflectedColor * reflectionCoeff), albedoFull.a);
 
+    #else 
+        #ifdef SSR_PIPELINE
+            gl_FragColor = texture2D(originalColor, vUV);
+        #else     
+            gl_FragColor = texture2D(textureSampler, vUV);
+        #endif
+    #endif
 
     // // ************* input texture rendering ****************
 

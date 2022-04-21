@@ -25,6 +25,8 @@ import "../Shaders/screenSpaceReflection2.fragment";
 import "../Shaders/screenSpaceReflection2.vertex";
 import { RegisterClass } from "../Misc/typeStore";
 import { AbstractMesh } from "../Meshes/abstractMesh";
+import { CubeTexture } from "../Materials/Textures/cubeTexture";
+
 // import { Mesh } from "../Meshes/mesh";
 
 
@@ -58,6 +60,41 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
      */
     @serialize()
     public thickness: number = 0.3;
+
+    /**
+     * Gets or sets the cube texture used to define the reflection when the reflected rays of SRR leave the view space or when the maxDistance is reached.
+     * As the reflected rays can't reach the skybox, backUpTexture could typically be the skybox texture or a texture from a reflection probe. 
+     */
+    @serialize()
+    private _backUpTexture: Nullable<CubeTexture> = null; 
+
+
+    get backUpTexture():Nullable<CubeTexture> {
+        return this._backUpTexture;
+    }
+    set backUpTexture(backUpTex:Nullable<CubeTexture>) {
+        this._backUpTexture = backUpTex;
+        this._updateEffectDefines();
+    }
+
+    /**
+     * Gets or sets the reflection quality through the size of the renderTargetTexture we use.
+     * Quality property is expected to be between 0.5 (low quality) and 1.0 (hight quality). It is clamp to [0, 1].
+     */
+    @serialize()
+    private _quality: number = 0.75; 
+
+    // get quality():number {
+    //     return this._quality;
+    // }
+    // set quality(val:number) {
+    //     // clamp val to [0,1] in case the user in not aware about the way to set the quality 
+    //     //(and avoid to create a renderTargetTexture of size 10000 * size of canva)
+    //     this._quality = val <= 0.0 ? 0.0 
+    //                     : val >= 1.0 ? 1.0 
+    //                     : val;
+    // }
+
 
     private _forceGeometryBuffer: boolean = false;
     private get _geometryBufferRenderer(): Nullable<GeometryBufferRenderer> {
@@ -115,7 +152,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             name, 
             'screenSpaceReflection2',
             ["projection", "view", "maxDistance", "resolution", "steps", "thickness", "minZ", "maxZ"], 
-            ["textureSampler", "normalSampler", "depthSampler", "positionSampler", "specularMap", "metallicMap"], 
+            ["textureSampler", "normalSampler", "depthSampler", "positionSampler", "specularMap", "metallicMap", "cameraPos", "backUpSampler"], 
             options, 
             camera, 
             samplingMode,//Texture.BILINEAR_SAMPLINGMODE, 
@@ -133,10 +170,10 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         }
 
         // our own prePass
-        const renderSpecularTarget = new RenderTargetTexture("specular to texture", {height: engine.getRenderHeight(),  width: engine.getRenderWidth()}, scene);
+        const renderSpecularTarget = new RenderTargetTexture("specular to texture", {height: engine.getRenderHeight() * this._quality,  width: engine.getRenderWidth() * this._quality}, scene);
         scene.customRenderTargets.push(renderSpecularTarget);
      
-        const renderMetallicTarget = new RenderTargetTexture("metallic to texture", {height: engine.getRenderHeight(),  width: engine.getRenderWidth()}, scene);
+        const renderMetallicTarget = new RenderTargetTexture("metallic to texture", {height: engine.getRenderHeight() * this._quality,  width: engine.getRenderWidth() * this._quality}, scene);
         scene.customRenderTargets.push(renderMetallicTarget);
         
         scene.meshes.forEach ((mesh) => {
@@ -179,7 +216,8 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             prePassRenderer?.markAsDirty();
             this._prePassEffectConfiguration = new ScreenSpaceReflections2Configuration();
         }
-                 
+
+        this._isSceneRightHanded = scene.useRightHandedSystem;
         this._updateEffectDefines();      
 
         // On apply, send uniforms
@@ -205,9 +243,12 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 effect.setTexture("positionSampler", this._prePassRenderer.getRenderTarget().textures[positionIndex]);
             }
                
+            effect.setTexture("specularMap", renderSpecularTarget); 
+            effect.setTexture("metallicMap", renderMetallicTarget); 
 
-            effect.setTexture("specularMap", renderSpecularTarget); // pass the renderSpecularTarget as our second texture
-            effect.setTexture("metallicMap", renderMetallicTarget); // pass the renderMetallicTarget as our third texture
+            if (this._backUpTexture){
+                effect.setTexture("backUpSampler", this._backUpTexture);
+            }
 
             const viewMatrix = camera.getViewMatrix(true);
             const projectionMatrix = camera.getProjectionMatrix(true);
@@ -225,9 +266,9 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
 
             effect.setFloat("minZ", camera.minZ);
             effect.setFloat("maxZ", camera.maxZ);
-        };
 
-        this._isSceneRightHanded = scene.useRightHandedSystem;
+            // effect.setVector3("cameraPos", camera.position);
+        };
     }
 
     private _whenAllReady (mesh : AbstractMesh, resolve : any) {
@@ -245,7 +286,6 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         return new Promise((resolve : any, reject : any) => {
              
             this._whenAllReady(mesh, () => resolve());
-            // we need to do something here to make sure the texture are loaded before calling resolve
         })
     }
 
@@ -257,7 +297,6 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         this._whenAbsMeshReady(mesh).then(() => {
             this._computeSpecularMap(mesh, scene, renderSpecularTarget);
             this._computeMetallicMap(mesh, scene, renderMetallicTarget);
-            // this._computeReflectionMap(mesh, scene, renderReflectionTarget);
             
             mesh.onMaterialChangedObservable.add(() => {
                 const idxSpec = renderSpecularTarget.renderList?.indexOf(mesh);
@@ -271,7 +310,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 this._whenAbsMeshReady(mesh).then(() => {
                     this._computeSpecularMap(mesh, scene, renderSpecularTarget);
                     this._computeMetallicMap(mesh, scene, renderMetallicTarget);
-                    // this._computeReflectionMap(mesh, scene, renderReflectionTarget);
+    
                 })
             })
             
@@ -296,6 +335,10 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
 
         if (this._isSceneRightHanded) {
             defines.push("#define RIGHT_HANDED_SCENE");
+        }
+
+        if (this._backUpTexture) {
+            defines.push("#define BACKUP_TEXTURE");
         }
 
         this.updateEffect(defines.join("\n"));
@@ -342,7 +385,11 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             },
             {
                 attributes: ["position", "normal", "uv"],
-                uniforms: ["world", "worldView", "worldViewProjection", "view", "projection"],
+                uniforms: ["world", "worldView", "worldViewProjection", "view", "projection",
+                            "specTexvScale", "specTexuScale", "specTexvOffset", "specTexuOffset",
+                            "albedoTexvScale", "albedoTexuScale", "albedoTexvOffset", "albedoTexuOffset",
+                            "ORMTexture", "metallic", "roughness", "albedoTexture", "albedoColor", 
+                            "specularGlossinessTexture", "glossiness", "reflectivityTexture", "reflectivityColor"],
                 defines : defines, // will be fill in according to given material data
             },
         );
@@ -490,7 +537,9 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             },
             {
                 attributes: ["position", "normal", "uv"],
-                uniforms: ["world", "worldView", "worldViewProjection", "view", "projection"],
+                uniforms: ["world", "worldView", "worldViewProjection", "view", "projection",
+                            "metallicTexvScale", "metallicTexuScale", "metallicTexvOffset", "metallicTexuOffset",
+                            "metallic", "ORMTexture", "indexOfRefraction"],
                 defines : defines, // will be fill in according to given material data
             },
         );
