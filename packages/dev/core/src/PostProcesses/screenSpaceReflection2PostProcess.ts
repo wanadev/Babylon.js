@@ -62,18 +62,32 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
     public thickness: number = 0.3;
 
     /**
-     * Gets or sets the cube texture used to define the reflection when the reflected rays of SRR leave the view space or when the maxDistance is reached.
-     * As the reflected rays can't reach the skybox, backUpTexture could typically be the skybox texture or a texture from a reflection probe. 
+     * Gets or sets the Skybox cubeTexture to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
      */
     @serialize()
-    private _backUpTexture: Nullable<CubeTexture> = null; 
+    private _backUpTextureSkybox: Nullable<CubeTexture> = null; 
 
 
-    get backUpTexture():Nullable<CubeTexture> {
-        return this._backUpTexture;
+    get backUpTextureSkybox():Nullable<CubeTexture> {
+        return this._backUpTextureSkybox;
     }
-    set backUpTexture(backUpTex:Nullable<CubeTexture>) {
-        this._backUpTexture = backUpTex;
+    set backUpTextureSkybox(backUpTex:Nullable<CubeTexture>) {
+        this._backUpTextureSkybox = backUpTex;
+        this._updateEffectDefines();
+    }
+
+    /**
+     * Gets or sets the Skybox cubeTexture to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
+     */
+    @serialize()
+    private _backUpTextureProbe: Nullable<CubeTexture> = null; 
+
+
+    get backUpTextureProbe():Nullable<CubeTexture> {
+        return this._backUpTextureProbe;
+    }
+    set backUpTextureProbe(backUpTex:Nullable<CubeTexture>) {
+        this._backUpTextureProbe = backUpTex;
         this._updateEffectDefines();
     }
 
@@ -230,31 +244,37 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             if (this._geometryBufferRenderer) {
                 // Samplers
                 const positionIndex = this._geometryBufferRenderer.getTextureIndex(GeometryBufferRenderer.POSITION_TEXTURE_TYPE);
-
+                
                 effect.setTexture("normalSampler", this._geometryBufferRenderer!.getGBuffer().textures[1]);
                 effect.setTexture("positionSampler", this._geometryBufferRenderer!.getGBuffer().textures[positionIndex]);
+                effect.setTexture("depthSampler", this._geometryBufferRenderer!.getGBuffer().textures[0]);
             }
             else if (this._prePassRenderer) { // doesn't work !
                 // Samplers
                 const normalIndex = this._prePassRenderer.getIndex(Constants.PREPASS_NORMAL_TEXTURE_TYPE);
                 const positionIndex = this._prePassRenderer.getIndex(Constants.PREPASS_POSITION_TEXTURE_TYPE);
+                const depthIndex = this._prePassRenderer.getIndex(Constants.PREPASS_DEPTH_TEXTURE_TYPE);
 
                 effect.setTexture("normalSampler", this._prePassRenderer.getRenderTarget().textures[normalIndex]);
                 effect.setTexture("positionSampler", this._prePassRenderer.getRenderTarget().textures[positionIndex]);
+                effect.setTexture("depthSampler", this._prePassRenderer.getRenderTarget().textures[depthIndex]);
             }
-               
             effect.setTexture("specularMap", renderSpecularTarget); 
             effect.setTexture("metallicMap", renderMetallicTarget); 
+            
 
-            if (this._backUpTexture){
-                effect.setTexture("backUpSampler", this._backUpTexture);
+            if (this._backUpTextureSkybox){
+                effect.setTexture("backUpSampler", this._backUpTextureSkybox);
+            }
+            else if (this._backUpTextureProbe){
+                effect.setTexture("backUpSampler", this._backUpTextureProbe);
             }
 
             const viewMatrix = camera.getViewMatrix(true);
             const projectionMatrix = camera.getProjectionMatrix(true);
 
-            const depthRenderer = scene.enableDepthRenderer();
-            effect.setTexture("depthSampler", depthRenderer.getDepthMap());
+            // const depthRenderer = scene.enableDepthRenderer();
+            // effect.setTexture("depthSampler", depthRenderer.getDepthMap());
 
             effect.setMatrix("projection", projectionMatrix);
             effect.setMatrix("view", viewMatrix);
@@ -337,8 +357,12 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             defines.push("#define RIGHT_HANDED_SCENE");
         }
 
-        if (this._backUpTexture) {
-            defines.push("#define BACKUP_TEXTURE");
+        if (this._backUpTextureSkybox) {
+            defines.push("#define BACKUP_TEXTURE_SKYBOX");
+        }
+
+        if (this._backUpTextureProbe) {
+            defines.push("#define BACKUP_TEXTURE_PROBE");
         }
 
         this.updateEffect(defines.join("\n"));
@@ -386,8 +410,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             {
                 attributes: ["position", "normal", "uv"],
                 uniforms: ["world", "worldView", "worldViewProjection", "view", "projection",
-                            "specTexvScale", "specTexuScale", "specTexvOffset", "specTexuOffset",
-                            "albedoTexvScale", "albedoTexuScale", "albedoTexvOffset", "albedoTexuOffset",
+                            "albedoTextureMatrix", "albedoTextureMatrix",
                             "ORMTexture", "metallic", "roughness", "albedoTexture", "albedoColor", 
                             "specularGlossinessTexture", "glossiness", "reflectivityTexture", "reflectivityColor"],
                 defines : defines, // will be fill in according to given material data
@@ -402,10 +425,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 if (m.material.metallicRoughnessTexture != null) {
                     specularMapShader.setTexture("ORMTexture", m.material.metallicRoughnessTexture);
                     defines.push("#define ORMTEXTURE");
-                    specularMapShader.setFloat("specTexvScale", (m.material.metallicRoughnessTexture as Texture).vScale);
-                    specularMapShader.setFloat("specTexuScale", (m.material.metallicRoughnessTexture as Texture).uScale);
-                    specularMapShader.setFloat("specTexvOffset", (m.material.metallicRoughnessTexture as Texture).vOffset);
-                    specularMapShader.setFloat("specTexuOffset", (m.material.metallicRoughnessTexture as Texture).uOffset);
+                    specularMapShader.setMatrix("specTextureMatrix", (m.material.metallicRoughnessTexture as Texture).getTextureMatrix());
                 }
                 if (m.material.metallic != null) {
                     specularMapShader.setFloat("metallic", m.material.metallic);
@@ -417,11 +437,9 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 }
                 if (m.material.baseTexture != null) {
                     specularMapShader.setTexture("albedoTexture", m.material.baseTexture);
-                    defines.push("#define ALBEDOTEXTURE");
-                    specularMapShader.setFloat("albedoTexvScale", (m.material.baseTexture as Texture).vScale);
-                    specularMapShader.setFloat("albedoTexuScale", (m.material.baseTexture as Texture).uScale);
-                    specularMapShader.setFloat("albedoTexvOffset", (m.material.baseTexture as Texture).vOffset);
-                    specularMapShader.setFloat("albedoTexuOffset", (m.material.baseTexture as Texture).uOffset);
+                    defines.push("#define ALBEDOTEXTURE"); 
+                    specularMapShader.setMatrix("albedoTextureMatrix", (m.material.baseTexture as Texture).getTextureMatrix());
+
                 } else if (m.material.baseColor != null) {
                     specularMapShader.setColor3("albedoColor", m.material.baseColor);
                     defines.push("#define ALBEDOCOLOR");
@@ -433,10 +451,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 if (m.material.specularGlossinessTexture != null) {
                     specularMapShader.setTexture("specularGlossinessTexture", m.material.specularGlossinessTexture);
                     defines.push("#define SPECULARGLOSSINESSTEXTURE");
-                    specularMapShader.setFloat("specTexvScale", (m.material.specularGlossinessTexture as Texture).vScale);
-                    specularMapShader.setFloat("specTexuScale", (m.material.specularGlossinessTexture as Texture).uScale);
-                    specularMapShader.setFloat("specTexvOffset", (m.material.specularGlossinessTexture as Texture).vOffset);
-                    specularMapShader.setFloat("specTexuOffset", (m.material.specularGlossinessTexture as Texture).uOffset);
+                    specularMapShader.setMatrix("specTextureMatrix", (m.material.specularGlossinessTexture as Texture).getTextureMatrix());
 
                 } else {
                     if (m.material.specularColor != null) {
@@ -454,10 +469,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 if (m.material.metallicTexture != null) {
                     specularMapShader.setTexture("ORMTexture", m.material.metallicTexture);
                     defines.push("#define ORMTEXTURE");
-                    specularMapShader.setFloat("specTexvScale", (m.material.metallicTexture as Texture).vScale);
-                    specularMapShader.setFloat("specTexuScale", (m.material.metallicTexture as Texture).uScale);
-                    specularMapShader.setFloat("specTexvOffset", (m.material.metallicTexture as Texture).vOffset);
-                    specularMapShader.setFloat("specTexuOffset", (m.material.metallicTexture as Texture).uOffset);
+                    specularMapShader.setMatrix("specTextureMatrix", (m.material.metallicTexture as Texture).getTextureMatrix());
                 }
                 if (m.material.metallic != null) {
                     specularMapShader.setFloat("metallic", m.material.metallic);
@@ -472,11 +484,9 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 if (m.material.roughness != null || m.material.metallic != null || m.material.metallicTexture != null){ // MetallicRoughness Model
                     if (m.material.albedoTexture != null) {
                         specularMapShader.setTexture("albedoTexture", m.material.albedoTexture);
-                        defines.push("#define ALBEDOTEXTURE");
-                        specularMapShader.setFloat("albedoTexvScale", (m.material.albedoTexture as Texture).vScale);
-                        specularMapShader.setFloat("albedoTexuScale", (m.material.albedoTexture as Texture).uScale);
-                        specularMapShader.setFloat("albedoTexvOffset", (m.material.albedoTexture as Texture).vOffset);
-                        specularMapShader.setFloat("albedoTexuOffset", (m.material.albedoTexture as Texture).uOffset);
+                        defines.push("#define ALBEDOTEXTURE");                       
+                        specularMapShader.setMatrix("albedoTextureMatrix", (m.material.albedoTexture as Texture).getTextureMatrix());
+
                     } else if (m.material.albedoColor != null) {
                         specularMapShader.setColor3("albedoColor", m.material.albedoColor);
                         defines.push("#define ALBEDOCOLOR");
@@ -486,10 +496,8 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                     if (m.material.reflectivityTexture != null) {
                         specularMapShader.setTexture("specularGlossinessTexture", m.material.reflectivityTexture);
                         defines.push("#define SPECULARGLOSSINESSTEXTURE");
-                        specularMapShader.setFloat("specTexvScale", (m.material.reflectivityTexture as Texture).vScale);
-                        specularMapShader.setFloat("specTexuScale", (m.material.reflectivityTexture as Texture).uScale);
-                        specularMapShader.setFloat("specTexvOffset", (m.material.reflectivityTexture as Texture).vOffset);
-                        specularMapShader.setFloat("specTexuOffset", (m.material.reflectivityTexture as Texture).uOffset);
+                        specularMapShader.setMatrix("specTextureMatrix", (m.material.reflectivityTexture as Texture).getTextureMatrix());
+
                     } else if (m.material.reflectivityColor != null) {
                         specularMapShader.setColor3("reflectivityColor", m.material.reflectivityColor);
                         defines.push("#define REFLECTIVITYCOLOR");
@@ -506,10 +514,8 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 if (m.material.specularTexture != null) {
                     specularMapShader.setTexture("reflectivityTexture", m.material.specularTexture);
                     defines.push("#define REFLECTIVITYTEXTURE");
-                    specularMapShader.setFloat("specTexvScale", (m.material.specularTexture as Texture).vScale);
-                    specularMapShader.setFloat("specTexuScale", (m.material.specularTexture as Texture).uScale);
-                    specularMapShader.setFloat("specTexvOffset", (m.material.specularTexture as Texture).vOffset);
-                    specularMapShader.setFloat("specTexuOffset", (m.material.specularTexture as Texture).uOffset);
+                    specularMapShader.setMatrix("specTextureMatrix", (m.material.specularTexture as Texture).getTextureMatrix());
+
                 }
                 if (m.material.specularColor != null) {
                     specularMapShader.setColor3("reflectivityColor", m.material.specularColor);
@@ -537,8 +543,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             },
             {
                 attributes: ["position", "normal", "uv"],
-                uniforms: ["world", "worldView", "worldViewProjection", "view", "projection",
-                            "metallicTexvScale", "metallicTexuScale", "metallicTexvOffset", "metallicTexuOffset",
+                uniforms: ["world", "worldView", "worldViewProjection", "view", "projection", "textureMatrix",
                             "metallic", "ORMTexture", "indexOfRefraction"],
                 defines : defines, // will be fill in according to given material data
             },
@@ -552,10 +557,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 if (m.material.metallicRoughnessTexture != null) {
                     metallicMapShader.setTexture("ORMTexture", m.material.metallicRoughnessTexture);
                     defines.push("#define ORMTEXTURE");
-                    metallicMapShader.setFloat("metallicTexvScale", (m.material.metallicRoughnessTexture as Texture).vScale);
-                    metallicMapShader.setFloat("metallicTexuScale", (m.material.metallicRoughnessTexture as Texture).uScale);
-                    metallicMapShader.setFloat("metallicTexvOffset", (m.material.metallicRoughnessTexture as Texture).vOffset);
-                    metallicMapShader.setFloat("metallicTexuOffset", (m.material.metallicRoughnessTexture as Texture).uOffset);
+                    metallicMapShader.setMatrix("textureMatrix", (m.material.metallicRoughnessTexture as Texture).getTextureMatrix());                  
                 }
                 if (m.material.metallic != null) {
                     metallicMapShader.setFloat("metallic", m.material.metallic);
@@ -567,10 +569,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 if (m.material.metallicTexture != null) {
                     metallicMapShader.setTexture("ORMTexture", m.material.metallicTexture);
                     defines.push("#define ORMTEXTURE");
-                    metallicMapShader.setFloat("metallicTexvScale", (m.material.metallicTexture as Texture).vScale);
-                    metallicMapShader.setFloat("metallicTexuScale", (m.material.metallicTexture as Texture).uScale);
-                    metallicMapShader.setFloat("metallicTexvOffset", (m.material.metallicTexture as Texture).vOffset);
-                    metallicMapShader.setFloat("metallicTexuOffset", (m.material.metallicTexture as Texture).uOffset);
+                    metallicMapShader.setMatrix("textureMatrix", (m.material.metallicTexture as Texture).getTextureMatrix());         
                 }
                 if (m.material.metallic != null) {
                     metallicMapShader.setFloat("metallic", m.material.metallic);
