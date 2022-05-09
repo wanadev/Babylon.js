@@ -42,7 +42,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
      * Gets or sets the maxDistance used to define how far in the scene we look for reflection
      */
     @serialize()
-    public maxDistance: number = 15; // maxDistance defined according to the scene size if still equal to -1.0 during the post process 
+    public maxDistance: number = -1.0; // maxDistance defined according to the scene size if still equal to -1.0 during the post process 
     /**
      * Gets or sets the resolution used for the first pass of the 2D ray marching algorithm. 
      * Controls how many fragments are skipped while marching the reflection ray. Typically in interval [0.1, 1.0]. 
@@ -54,12 +54,12 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
      * Gets or sets the number of steps allowed for the second pass of the algorithm. More the steps is high, more the reflections will be precise.
      */
     @serialize()
-    public steps: number = 10;
+    public steps: number = 15;
     /**
      * Gets or sets the thickness value used as tolerance when computing the intersection between the reflected ray and the scene. 
      */
     @serialize()
-    public thickness: number = 0.3;
+    public thickness: number = 0.05;
 
     /**
      * Gets or sets the Skybox cubeTexture to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
@@ -82,7 +82,6 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
     @serialize()
     private _backUpTextureProbe: Nullable<CubeTexture> = null; 
 
-
     get backUpTextureProbe():Nullable<CubeTexture> {
         return this._backUpTextureProbe;
     }
@@ -92,10 +91,16 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
     }
 
     /**
-     * Gets or sets the reflection quality through the size of the renderTargetTexture we use.
-     * Quality property is expected to be between 0.5 (low quality) and 1.0 (hight quality). It is clamp to [0, 1].
+     * Gets or sets a boolean which defines if the algorithme must increase the rendering quality according to the depth view 
      */
     @serialize()
+    public changeProperties: boolean = true; 
+
+    /**
+     * Defines the reflection quality through the size of the renderTargetTexture we use.
+     * Quality property is expected to be between 0.5 (low quality) and 1.0 (hight quality). It is clamp to [0, 1].
+     */
+    // @serialize()
     private _quality: number = 0.75; 
 
     // get quality():number {
@@ -109,6 +114,9 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
     //                     : val;
     // }
 
+
+    private renderSpecularTarget : RenderTargetTexture;
+    private renderMetallicTarget : RenderTargetTexture;
 
     private _forceGeometryBuffer: boolean = false;
     private get _geometryBufferRenderer(): Nullable<GeometryBufferRenderer> {
@@ -165,7 +173,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         super(
             name, 
             'screenSpaceReflection2',
-            ["projection", "view", "maxDistance", "resolution", "steps", "thickness", "minZ", "maxZ"], 
+            ["projection", "view", "maxDistance", "resolution", "steps", "thickness", "minZ", "maxZ", "changeProperties"], 
             ["textureSampler", "normalSampler", "depthSampler", "positionSampler", "specularMap", "metallicMap", "cameraPos", "backUpSampler"], 
             options, 
             camera, 
@@ -183,35 +191,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             return;
         }
 
-        // our own prePass
-        const renderSpecularTarget = new RenderTargetTexture("specular to texture", {height: engine.getRenderHeight() * this._quality,  width: engine.getRenderWidth() * this._quality}, scene);
-        scene.customRenderTargets.push(renderSpecularTarget);
-     
-        const renderMetallicTarget = new RenderTargetTexture("metallic to texture", {height: engine.getRenderHeight() * this._quality,  width: engine.getRenderWidth() * this._quality}, scene);
-        scene.customRenderTargets.push(renderMetallicTarget);
         
-        scene.meshes.forEach ((mesh) => {
-            this._iterateOverTheSceneMeshes(mesh, scene, renderSpecularTarget, renderMetallicTarget);
-        })   
-
-        this._scene.onNewMeshAddedObservable.add( (newMesh) => {
-            this._iterateOverTheSceneMeshes(newMesh, scene, renderSpecularTarget, renderMetallicTarget);
-        })
-        
-        this._scene.onMeshRemovedObservable.add( (mesh) => {
-            if(renderSpecularTarget.renderList) {
-                const idxSpec = renderSpecularTarget.renderList.indexOf(mesh);
-                if (idxSpec != -1){
-                    renderSpecularTarget.renderList?.splice(idxSpec, 1);
-                }
-            }
-            if(renderMetallicTarget.renderList){
-                const idxMetal = renderMetallicTarget.renderList.indexOf(mesh);
-                if (idxMetal != -1){
-                    renderMetallicTarget.renderList?.splice(idxMetal, 1);
-                }  
-            }
-        })
 
         // prePass
         this._forceGeometryBuffer = forceGeometryBuffer;
@@ -224,6 +204,35 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                     geometryBufferRenderer.enablePosition = true;
                 } 
             }
+            // our own prePass
+            this.renderSpecularTarget = new RenderTargetTexture("specular to texture", {height: engine.getRenderHeight() * this._quality,  width: engine.getRenderWidth() * this._quality}, scene);
+            scene.customRenderTargets.push(this.renderSpecularTarget);
+        
+            this.renderMetallicTarget = new RenderTargetTexture("metallic to texture", {height: engine.getRenderHeight() * this._quality,  width: engine.getRenderWidth() * this._quality}, scene);
+            scene.customRenderTargets.push(this.renderMetallicTarget);
+            
+            scene.meshes.forEach ((mesh) => {
+                this._iterateOverTheSceneMeshes(mesh, scene, this.renderSpecularTarget, this.renderMetallicTarget);
+            })   
+
+            this._scene.onNewMeshAddedObservable.add( (newMesh) => {
+                this._iterateOverTheSceneMeshes(newMesh, scene, this.renderSpecularTarget, this.renderMetallicTarget);
+            })
+            
+            this._scene.onMeshRemovedObservable.add( (mesh) => {
+                if(this.renderSpecularTarget.renderList) {
+                    const idxSpec = this.renderSpecularTarget.renderList.indexOf(mesh);
+                    if (idxSpec != -1){
+                        this.renderSpecularTarget.renderList?.splice(idxSpec, 1);
+                    }
+                }
+                if(this.renderMetallicTarget.renderList){
+                    const idxMetal = this.renderMetallicTarget.renderList.indexOf(mesh);
+                    if (idxMetal != -1){
+                        this.renderMetallicTarget.renderList?.splice(idxMetal, 1);
+                    }  
+                }
+            })
         }
         else { // doesn't work !
             const prePassRenderer = scene.enablePrePassRenderer();
@@ -248,20 +257,23 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 effect.setTexture("normalSampler", this._geometryBufferRenderer!.getGBuffer().textures[1]);
                 effect.setTexture("positionSampler", this._geometryBufferRenderer!.getGBuffer().textures[positionIndex]);
                 effect.setTexture("depthSampler", this._geometryBufferRenderer!.getGBuffer().textures[0]);
+
+                effect.setTexture("specularMap", this.renderSpecularTarget); 
+                effect.setTexture("metallicMap", this.renderMetallicTarget); 
             }
             else if (this._prePassRenderer) { // doesn't work !
                 // Samplers
                 const normalIndex = this._prePassRenderer.getIndex(Constants.PREPASS_NORMAL_TEXTURE_TYPE);
                 const positionIndex = this._prePassRenderer.getIndex(Constants.PREPASS_POSITION_TEXTURE_TYPE);
                 const depthIndex = this._prePassRenderer.getIndex(Constants.PREPASS_DEPTH_TEXTURE_TYPE);
+                const reflectivityIndex = this._prePassRenderer.getIndex(Constants.PREPASS_REFLECTIVITY_TEXTURE_TYPE);
 
                 effect.setTexture("normalSampler", this._prePassRenderer.getRenderTarget().textures[normalIndex]);
                 effect.setTexture("positionSampler", this._prePassRenderer.getRenderTarget().textures[positionIndex]);
                 effect.setTexture("depthSampler", this._prePassRenderer.getRenderTarget().textures[depthIndex]);
+                effect.setTexture("specularMap", this._prePassRenderer.getRenderTarget().textures[reflectivityIndex]);
             }
-            effect.setTexture("specularMap", renderSpecularTarget); 
-            effect.setTexture("metallicMap", renderMetallicTarget); 
-            
+                      
 
             if (this._backUpTextureSkybox){
                 effect.setTexture("backUpSampler", this._backUpTextureSkybox);
@@ -279,12 +291,18 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             effect.setMatrix("projection", projectionMatrix);
             effect.setMatrix("view", viewMatrix);
 
-            effect.setFloat("maxDistance", this.maxDistance);
+            if (this.maxDistance == -1.0){
+                effect.setFloat("maxDistance", (camera.maxZ - camera.minZ) * 0.0001 );
+            } else {
+                effect.setFloat("maxDistance", this.maxDistance);
+            }
             effect.setFloat("resolution", this.resolution);
             effect.setInt("steps", this.steps);
             effect.setFloat("thickness", this.thickness);
 
-            effect.setFloat("minZ", camera.minZ);
+            effect.setBool("changeProperties", this.changeProperties);
+
+            effect.setFloat("minZ", camera.minZ); // only used with depthRenderer
             effect.setFloat("maxZ", camera.maxZ);
 
             // effect.setVector3("cameraPos", camera.position);
