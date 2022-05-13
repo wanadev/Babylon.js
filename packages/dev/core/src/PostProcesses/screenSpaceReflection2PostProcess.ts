@@ -1,8 +1,6 @@
 import { Nullable } from "../types";
 import { Camera } from "../Cameras/camera";
-// import { Effect } from "../M    aterials/effect";
 import { Texture } from "../Materials/Textures/texture";
-// import { DynamicTexture } from "../Materials/Textures/dynamicTexture";
 import { RenderTargetTexture } from "../Materials/Textures/renderTargetTexture";
 import { StandardMaterial } from "../Materials/standardMaterial";
 import { PBRMaterial } from "../Materials/PBR/pbrMaterial";
@@ -15,7 +13,6 @@ import { GeometryBufferRenderer } from '../Rendering/geometryBufferRenderer';
 import { serialize, SerializationHelper } from '../Misc/decorators';
 import { PrePassRenderer } from "../Rendering/prePassRenderer";
 import { ScreenSpaceReflections2Configuration } from "../Rendering/screenSpaceReflections2Configuration";
-// import { PrePassRenderTarget } from "../Materials/Textures/prePassRenderTarget";
 
 import "../Shaders/specularMap.fragment";
 import "../Shaders/specularMap.vertex";
@@ -27,25 +24,22 @@ import { RegisterClass } from "../Misc/typeStore";
 import { AbstractMesh } from "../Meshes/abstractMesh";
 import { CubeTexture } from "../Materials/Textures/cubeTexture";
 
-// import { Mesh } from "../Meshes/mesh";
-
-
 declare type Engine = import("../Engines/engine").Engine;
 declare type Scene = import("../scene").Scene;
 
 /**
- * The ScreenSpaceReflectionPostProcess performs realtime reflections using only and only the available informations on the screen (positions and normals).
- * Basically, the screen space reflection post-process will compute reflections according the material's reflectivity.
+ * The ScreenSpaceReflectionPostProcess performs realtime reflections using only the available informations on the screen (positions, depth and normals).
+ * Basically, the screen space reflection post-process will compute reflections according the material's properties (TODO: verify this specularity/glossiness, metallic/roughness or reflectivity).
  */
 export class ScreenSpaceReflection2PostProcess extends PostProcess {
     /**
-     * Gets or sets the maxDistance used to define how far in the scene we look for reflection
+     * Gets or sets the maxDistance used to define how far we look for reflection during the ray-marching on the reflected ray
      */
     @serialize()
-    public maxDistance: number = -1.0; // maxDistance defined according to the scene size if still equal to -1.0 during the post process 
+    public maxDistance: number = 10.0; 
     /**
      * Gets or sets the resolution used for the first pass of the 2D ray marching algorithm. 
-     * Controls how many fragments are skipped while marching the reflection ray. Typically in interval [0.1, 1.0]. 
+     * Controls how many fragments are skipped while marching the reflected ray. Typically in interval [0.1, 1.0]. 
      * If resolution equals 0.0, every fragments are skiped and this results in no reflection at all.
      */
     @serialize()
@@ -61,31 +55,39 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
     @serialize()
     public thickness: number = 0.05;
 
-    /**
-     * Gets or sets the Skybox cubeTexture to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
-     */
+    
     @serialize()
     private _backUpTextureSkybox: Nullable<CubeTexture> = null; 
 
-
+    /**
+     * Gets the Skybox cubeTexture used to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
+     */
     get backUpTextureSkybox():Nullable<CubeTexture> {
         return this._backUpTextureSkybox;
     }
+
+    /**
+     * Sets the Skybox cubeTexture to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
+     */
     set backUpTextureSkybox(backUpTex:Nullable<CubeTexture>) {
         this._backUpTextureSkybox = backUpTex;
         this._updateEffectDefines();
     }
 
-    /**
-     * Gets or sets the Skybox cubeTexture to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
-     */
     @serialize()
     private _backUpTextureProbe: Nullable<CubeTexture> = null; 
 
-    get backUpTextureProbe():Nullable<CubeTexture> {
+    /**
+     * Gets the Probe cubeTexture used to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
+     */
+    public get backUpTextureProbe():Nullable<CubeTexture> {
         return this._backUpTextureProbe;
     }
-    set backUpTextureProbe(backUpTex:Nullable<CubeTexture>) {
+
+    /**
+     * Sets a Probe cubeTexture to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
+     */
+    public set backUpTextureProbe(backUpTex:Nullable<CubeTexture>) {
         this._backUpTextureProbe = backUpTex;
         this._updateEffectDefines();
     }
@@ -94,12 +96,13 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
      * Gets or sets a boolean which defines if the algorithme must increase the rendering quality according to the depth view 
      */
     @serialize()
-    public changeProperties: boolean = true; 
+    public changeProperties: boolean = false; 
 
     /**
      * Defines the reflection quality through the size of the renderTargetTexture we use.
      * Quality property is expected to be between 0.5 (low quality) and 1.0 (hight quality). It is clamp to [0, 1].
      */
+    // todo remove RTT and update comments
     // @serialize()
     private _quality: number = 0.75; 
 
@@ -113,7 +116,6 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
     //                     : val >= 1.0 ? 1.0 
     //                     : val;
     // }
-
 
     private renderSpecularTarget : RenderTargetTexture;
     private renderMetallicTarget : RenderTargetTexture;
@@ -145,8 +147,8 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         return "ScreenSpaceReflection2PostProcess";
     }
 
-        /**
-     * Creates a new instance of ScreenSpaceReflectionPostProcess.
+    /**
+     * Creates a new instance of ScreenSpaceReflection2PostProcess.
      * @param name The name of the effect.
      * @param scene The scene containing the objects to calculate reflections.
      * @param options The required width/height ratio to downsize to before computing the render pass.
@@ -174,10 +176,10 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             name, 
             'screenSpaceReflection2',
             ["projection", "view", "maxDistance", "resolution", "steps", "thickness", "minZ", "maxZ", "changeProperties"], 
-            ["textureSampler", "normalSampler", "depthSampler", "positionSampler", "specularMap", "metallicMap", "cameraPos", "backUpSampler"], 
+            ["textureSampler", "normalSampler", "depthSampler", "positionSampler", "specularMap", "metallicMap", "cameraPos", "backUpSampler", "albedoSampler"], 
             options, 
             camera, 
-            samplingMode,//Texture.BILINEAR_SAMPLINGMODE, 
+            samplingMode, 
             engine, 
             reusable,
             "#define SSR_SUPPORTED\n",
@@ -190,12 +192,10 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         if (!camera){
             return;
         }
-
-        
-
-        // prePass
+      
+        // PrePass
         this._forceGeometryBuffer = forceGeometryBuffer;
-        this._forceGeometryBuffer = true; //forceGeometryBuffer;
+        this._forceGeometryBuffer = false; //forceGeometryBuffer; // TODO remove when problem solved
         if (this._forceGeometryBuffer) {
             // Get geometry buffer renderer and update effect
             const geometryBufferRenderer = scene.enableGeometryBufferRenderer();
@@ -204,7 +204,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                     geometryBufferRenderer.enablePosition = true;
                 } 
             }
-            // our own prePass
+            // Our own 'prePass'
             this.renderSpecularTarget = new RenderTargetTexture("specular to texture", {height: engine.getRenderHeight() * this._quality,  width: engine.getRenderWidth() * this._quality}, scene);
             scene.customRenderTargets.push(this.renderSpecularTarget);
         
@@ -215,10 +215,12 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 this._iterateOverTheSceneMeshes(mesh, scene, this.renderSpecularTarget, this.renderMetallicTarget);
             })   
 
+            // When new mesh : add the mesh (and submeshes..) to the RTT.renderList 
             this._scene.onNewMeshAddedObservable.add( (newMesh) => {
                 this._iterateOverTheSceneMeshes(newMesh, scene, this.renderSpecularTarget, this.renderMetallicTarget);
             })
             
+            // When mesh removal : remove the mesh from the RTT.renderList 
             this._scene.onMeshRemovedObservable.add( (mesh) => {
                 if(this.renderSpecularTarget.renderList) {
                     const idxSpec = this.renderSpecularTarget.renderList.indexOf(mesh);
@@ -234,7 +236,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 }
             })
         }
-        else { // doesn't work !
+        else { // doesn't work ! incompatibility with RTT and PrePass + metallic not taken into account in prepass :(
             const prePassRenderer = scene.enablePrePassRenderer();
             prePassRenderer?.markAsDirty();
             this._prePassEffectConfiguration = new ScreenSpaceReflections2Configuration();
@@ -261,19 +263,22 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 effect.setTexture("specularMap", this.renderSpecularTarget); 
                 effect.setTexture("metallicMap", this.renderMetallicTarget); 
             }
-            else if (this._prePassRenderer) { // doesn't work !
+            else if (this._prePassRenderer) { // doesn't work ! incompatibility with RTT and PrePass + metallic not taken into account in prepass :(
                 // Samplers
                 const normalIndex = this._prePassRenderer.getIndex(Constants.PREPASS_NORMAL_TEXTURE_TYPE);
                 const positionIndex = this._prePassRenderer.getIndex(Constants.PREPASS_POSITION_TEXTURE_TYPE);
                 const depthIndex = this._prePassRenderer.getIndex(Constants.PREPASS_DEPTH_TEXTURE_TYPE);
-                const reflectivityIndex = this._prePassRenderer.getIndex(Constants.PREPASS_REFLECTIVITY_TEXTURE_TYPE);
+                // const reflectivityIndex = this._prePassRenderer.getIndex(Constants.PREPASS_REFLECTIVITY_TEXTURE_TYPE);
+                const reflectivityIndex = this._prePassRenderer.getIndex(Constants.PREPASS_SPECULARGLOSSINESS_EQUIVALENT_TEXTURE_TYPE);
+                // const albedoIndex = this._prePassRenderer.getIndex(Constants.PREPASS_ALBEDO_SQRT_TEXTURE_TYPE);
 
                 effect.setTexture("normalSampler", this._prePassRenderer.getRenderTarget().textures[normalIndex]);
                 effect.setTexture("positionSampler", this._prePassRenderer.getRenderTarget().textures[positionIndex]);
                 effect.setTexture("depthSampler", this._prePassRenderer.getRenderTarget().textures[depthIndex]);
                 effect.setTexture("specularMap", this._prePassRenderer.getRenderTarget().textures[reflectivityIndex]);
+                // effect.setTexture("albedoSampler", this._prePassRenderer.getRenderTarget().textures[albedoIndex]);
+                // effect.setTexture("metallicMap", this._prePassRenderer.getRenderTarget().textures[reflectivityIndex]); // TODO changen, for debug only
             }
-                      
 
             if (this._backUpTextureSkybox){
                 effect.setTexture("backUpSampler", this._backUpTextureSkybox);
@@ -291,11 +296,8 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             effect.setMatrix("projection", projectionMatrix);
             effect.setMatrix("view", viewMatrix);
 
-            if (this.maxDistance == -1.0){
-                effect.setFloat("maxDistance", (camera.maxZ - camera.minZ) * 0.0001 );
-            } else {
-                effect.setFloat("maxDistance", this.maxDistance);
-            }
+            effect.setFloat("maxDistance", this.maxDistance);
+            
             effect.setFloat("resolution", this.resolution);
             effect.setInt("steps", this.steps);
             effect.setFloat("thickness", this.thickness);
@@ -304,8 +306,6 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
 
             effect.setFloat("minZ", camera.minZ); // only used with depthRenderer
             effect.setFloat("maxZ", camera.maxZ);
-
-            // effect.setVector3("cameraPos", camera.position);
         };
     }
 
@@ -318,7 +318,6 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             mesh.onReady = () => resolve(); 
         }
     }
-  
 
     private _whenAbsMeshReady (mesh : AbstractMesh) {
         return new Promise((resolve : any, reject : any) => {
@@ -332,11 +331,11 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                                         renderSpecularTarget : RenderTargetTexture,
                                         renderMetallicTarget : RenderTargetTexture) {
 
-        this._whenAbsMeshReady(mesh).then(() => {
+        this._whenAbsMeshReady(mesh).then(() => { // wait until mesh is ready before updating RTT.renderList, otherwise the texture is not taken into account
             this._computeSpecularMap(mesh, scene, renderSpecularTarget);
             this._computeMetallicMap(mesh, scene, renderMetallicTarget);
             
-            mesh.onMaterialChangedObservable.add(() => {
+            mesh.onMaterialChangedObservable.add(() => { // When change in material : remove the mesh and add the new one to the RTT.renderList 
                 const idxSpec = renderSpecularTarget.renderList?.indexOf(mesh);
                 if (idxSpec && idxSpec != -1){
                     renderSpecularTarget.renderList?.splice(idxSpec, 1);
@@ -345,7 +344,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 if (idxMetal && idxMetal != -1){
                     renderMetallicTarget.renderList?.splice(idxMetal, 1);
                 }
-                this._whenAbsMeshReady(mesh).then(() => {
+                this._whenAbsMeshReady(mesh).then(() => { // wait until mesh is ready before updating RTT.renderList, otherwise the texture is not taken into account
                     this._computeSpecularMap(mesh, scene, renderSpecularTarget);
                     this._computeMetallicMap(mesh, scene, renderMetallicTarget);
     

@@ -1,20 +1,15 @@
-// #ifdef GL_ES
-// precision mediump float;
-// #endif
+// Screen Space Reflection Post-Process based on the following tutorial:
+// https://lettier.github.io/3d-game-shaders-for-beginners/screen-space-reflection.html
 
 uniform sampler2D textureSampler;
-
-#ifdef SSR_PIPELINE
-uniform sampler2D originalColor;
-uniform sampler2D blurColor;
-#endif
 
 #ifdef SSR_SUPPORTED
 uniform sampler2D normalSampler;
 uniform sampler2D positionSampler;
 uniform sampler2D specularMap;
-uniform sampler2D metallicMap;
 uniform sampler2D depthSampler;
+// uniform sampler2D metallicMap;
+// uniform sampler2D albedoSampler;
 // uniform vec3 cameraPos;
 
 #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
@@ -52,10 +47,11 @@ struct ReflectionInfo {
 // Fresnel Schlicks formula according to wikipedia https://en.wikipedia.org/wiki/Schlick%27s_approximation 
 vec3 fresnelSchlick(float cosTheta, vec3 F0)
 {
-    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+    return F0 + (vec3(1.0) - F0) * pow(1.0 - cosTheta, 5.0);
 }
 
-
+// Computes and returns the coordinates and the visibility of the reflected pixel if any, as well as a boolean defining if there is a reflected pixel or if it is a miss
+// The intersection algorithm based on a David Lettier's tutorial uses 2D ray marching 
 ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 texSize){
     ReflectionInfo info;
 
@@ -69,7 +65,7 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
         float x =  tmp;
         float xSquared = x * tmp;
         float xCube = xSquared * tmp;
-        // some magic (TODO : try to explain how we get this parameters)
+        // some black magic (TODO : try to explain how we get this parameters)
         tol = clamp(-0.00016 * xCube + 0.0082 * xSquared - 0.07 * x + 0.2, 0.05, 1.5);
         resol = clamp(0.03 * x + 0.15, 0.2, 1.0);
         step = int(0.003* xSquared + 0.08 * x + 4.2);
@@ -105,7 +101,7 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
         }
     #endif
 
-     // Calculate the start and end point of the reflection ray in screen space.
+    // Calculate the start and end point of the reflection ray in screen space.
     vec4 startSS = projection * startVS; // Project to screen space.
     startSS.xyz /= startSS.w; // Perform the perspective divide.
     startSS.xy= startSS.xy * 0.5 + vec2(0.5); // Convert the screen-space XY coordinates to UV coordinates.
@@ -116,8 +112,7 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     endSS.xy   = endSS.xy * 0.5 + vec2(0.5);
     endSS.xy  *= texSize;
 
-    vec2 currFrag  = startSS.xy;
-    // vec2 uv = currFrag / texSize; // test OK :  currFrag / texSize equivalent to vUV at this point
+    vec2 currFrag  = startSS.xy; // currFrag / texSize equivalent to vUV at this point
     vec2 uv = vUV;
 
     // compute delta difference between X and Y coordinates
@@ -146,8 +141,6 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     float depth; 
     float depthAtCurrPosVS; 
 
-    
-    // tol = thickness + 0.000001 * exp(0.5 * distance(hitCoordVS, vec3(0.0, 0.0, 0.0)));
     // looking for intersection position
     for (int i = 0; i < int(delta); i++) {
         // first pass
@@ -159,7 +152,6 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
 
         depthAtCurrPosVS = (texture2D(depthSampler, uv).r);
         // depthAtCurrPosVS = (view *texture2D(positionSampler, uv.xy)).z; // equivalent to the previous line
-        // depthAtCurrPosVS = (texture2D(depthSampler, uv).r) * (maxZ - minZ) + minZ; // only used with DepthRenderer
 
         search1 = mix ( (currFrag.y - startSS.y) / deltaY, 
                       (currFrag.x - startSS.x) / deltaX, 
@@ -206,7 +198,6 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     
     if (hit0 == 0.0){ // if no hit during the first pass, we skip the second pass
         info.coords = uv;
-        // info.visibility = 0.0;
         info.miss = true;
         info.visibility = 0.0;
         #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
@@ -227,7 +218,6 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
 
         depthAtCurrPosVS = (texture2D(depthSampler, uv).r);
         // depthAtCurrPosVS = (view * texture2D(positionSampler, uv.xy)).z; // equivalent to the previous line
-        // depthAtCurrPosVS = (texture2D(depthSampler, uv).r) * (maxZ - minZ) + minZ; // only used with DepthRenderer
 
         viewDistance = (startVS.z * endVS.z) / mix(endVS.z, startVS.z, search1);
         depth = viewDistance - depthAtCurrPosVS;
@@ -258,7 +248,7 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
        
     // compute how much the reflection is visible
     float visibility;
-    if (hit1 == 0.0){//} || uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0){ // no hit => no reflected value
+    if (hit1 == 0.0){
          #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
             visibility = 0.5;
         #else
@@ -282,6 +272,8 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     return info;
 }
 
+// Hash function from screenSpaceReflection.fragment.fx 
+// Return a random vec3 
 vec3 hash(vec3 a)
 {
     a = fract(a * 0.8);
@@ -293,8 +285,9 @@ void main(void)
 {
 
     // ********************* debug **********************
-    // float depth = (texture2D(depthSampler, vUV).r);
-    // // float depth = ((texture2D(depthSampler, vUV).r) * (maxZ - minZ) + minZ)/maxZ;
+
+    // float z = ( (1.0/(texture2D(depthSampler, vUV).r )) - (1.0/minZ)) / ((1.0/maxZ) - (1.0/minZ));
+    // float depth = pow((z * 2.0 - 1.0), 5.0); 
     // gl_FragColor = vec4(depth, depth, depth, 1.0);
     // return; // just for test
 
@@ -318,17 +311,22 @@ void main(void)
 
     #ifdef SSR_SUPPORTED
 
-    #ifdef SSR_PIPELINE
-        vec4 albedoFull = texture2D(originalColor, vUV);
-    #else 
-        vec4 albedoFull = texture2D(textureSampler, vUV);
-    #endif
+    vec4 originalFull = texture2D(textureSampler, vUV);
 
-    vec3 albedo = albedoFull.rgb;
+    vec3 original = originalFull.rgb;
+    // vec4 albedo = texture2D(albedoSampler, vUV);
+    // vec3 albedo = original; // TODO remove when pre-pass activated
     vec3 spec = texture2D(specularMap, vUV).rgb;
-    float metallic = texture2D(metallicMap, vUV).b;
-    float indexOfRefraction = texture2D(metallicMap, vUV).r;
+    // float metallic = texture2D(metallicMap, vUV).b;
+    // float indexOfRefraction = texture2D(metallicMap, vUV).r;
     float roughness = 1.0 - texture2D(specularMap, vUV).a;
+
+    // Translate Metallic-Roughness model to Specular-Glossiness model according to https://marmoset.co/posts/pbr-texture-conversion/ 
+    // if (metallic != 0.0){
+    //     spec = mix(vec3(0.04), albedo.rbg, metallic); // metallic texture acts as a mask when determining specularity
+    //     // how to take alpha into account ?
+    //     // spec *= albedo.a;
+    // }
 
     // Get coordinates of the direction of the reflected ray
     // according to the pixel's position and normal.
@@ -354,14 +352,9 @@ void main(void)
     
     vec2 texSize = gl_FragCoord.xy / vUV;
 
-    #ifdef SSR_PIPELINE
-        vec3 jitt = mix(vec3(0.0), hash(position), 0.0005 * roughness); // jitt to simulate roughness
-        ReflectionInfo info = getReflectionInfo2DRayMarching(reflected + jitt, position, texSize);
-        // ReflectionInfo info = getReflectionInfo2DRayMarching(reflected, position, texSize);
-    #else    
-        vec3 jitt = mix(vec3(0.0), hash(position), 0.1 * roughness);
-        ReflectionInfo info = getReflectionInfo2DRayMarching(reflected + jitt, position, texSize);
-    #endif
+   
+    vec3 jitt = mix(vec3(0.0), hash(position), 0.1 * roughness); // hash(position) represents a random vector3, jitt represents a bias to simulate roughness (light deviation)
+    ReflectionInfo info = getReflectionInfo2DRayMarching(reflected + jitt, position, texSize);
 
     float visibility = clamp(info.visibility, 0.0, 1.0);  
   
@@ -382,45 +375,28 @@ void main(void)
             #endif
             reflectedColor = textureCube(backUpSampler, coord + jitt).xyz;
         #else 
-             #ifdef SSR_PIPELINE
-                gl_FragColor = texture2D(originalColor, vUV);
-            #else     
-                gl_FragColor = texture2D(textureSampler, vUV);
-            #endif
+            gl_FragColor = texture2D(textureSampler, vUV);
         #endif 
     } else {
-        #ifdef SSR_PIPELINE
-            reflectedColor = mix(texture2D(originalColor, info.coords).xyz, texture2D(blurColor, info.coords).xyz, roughness);
-        #else
-            reflectedColor = texture2D(textureSampler, info.coords).xyz;
-        #endif
+        reflectedColor = texture2D(textureSampler, info.coords).xyz;
     }
 
     vec2 dCoords = smoothstep(0.2, 0.6, abs(vec2(0.5, 0.5) - info.coords.xy));
     float screenEdgefactor = clamp(1.0 - (dCoords.x + dCoords.y), 0.0, 1.0);
     
     // Fresnel F0
-    vec3 F0 = vec3(0.04); 
-
-    // vec3 reflectionCoeff;
-    if(metallic != 0.0){ // as suggested in https://learnopengl.com/PBR/Theory 
-        F0 = mix(F0, albedo, metallic);
-    } 
+    // "The specular map contains F0 for dielectrics and the reflectance value for raw metal" https://substance3d.adobe.com/tutorials/courses/the-pbr-guide-part-2 
+    // at the end of the day: FO computed as suggested in https://learnopengl.com/PBR/Theory  
+    // if Specular-Glossiness model: F0 = spec
+    // if Metallic-Roughness model: F0 = mix(0.04, albedo, metallic)
+    vec3 F0 = spec;
   
     vec3 reflectionCoeff = fresnelSchlick(max(dot(unitNormal, unitPosition), 0.0), F0)
-                            * clamp( spec * screenEdgefactor * visibility, 0.0, 0.9); 
-
-    // // Reflection coefficient
-    // #ifdef RIGHT_HANDED_SCENE
-    //     reflected.z *= -1.0;
-    // #endif
-
-    // Apply
-    // float reflectionPart = clamp(pow(spec, reflectionSpecularFalloffExponent) 
-    //                         * screenEdgefactor * reflected.z, 0.0, 0.9);
-    // vec3 SSR = info.color * fresnel;
+                            * clamp(spec * screenEdgefactor * visibility, 0.0, 0.9); 
 
     // // *********************** SHADING *******************************
+
+    // ********************* debug **********************
 
     // // to render the reflected UV coordinates in rg 
     // // and the visibility of the reflection in b
@@ -439,16 +415,14 @@ void main(void)
 
     // return;
 
-    // // to render the final color
-    // // (no refraction) and (AbsorbtionCoeff + RefractionCoeff + ReflectionCoeff = 1)  => AbsorbtionCoeff = 1 - ReflectionCoeff
-    gl_FragColor = vec4((albedo * (vec3(1.0) - reflectionCoeff)) + (reflectedColor * reflectionCoeff), albedoFull.a);
+    // ********************* debug **********************
+
+    // to render the final color
+    // (no refraction) and (AbsorbtionCoeff + RefractionCoeff + ReflectionCoeff = 1)  => AbsorbtionCoeff = 1 - ReflectionCoeff
+    gl_FragColor = vec4((original * (vec3(1.0) - reflectionCoeff)) + (reflectedColor * reflectionCoeff), originalFull.a);
 
     #else 
-        #ifdef SSR_PIPELINE
-            gl_FragColor = texture2D(originalColor, vUV);
-        #else     
-            gl_FragColor = texture2D(textureSampler, vUV);
-        #endif
+        gl_FragColor = texture2D(textureSampler, vUV);
     #endif
 
     // // ************* input texture rendering ****************
