@@ -268,8 +268,8 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 const normalIndex = this._prePassRenderer.getIndex(Constants.PREPASS_NORMAL_TEXTURE_TYPE);
                 const positionIndex = this._prePassRenderer.getIndex(Constants.PREPASS_POSITION_TEXTURE_TYPE);
                 const depthIndex = this._prePassRenderer.getIndex(Constants.PREPASS_DEPTH_TEXTURE_TYPE);
-                // const reflectivityIndex = this._prePassRenderer.getIndex(Constants.PREPASS_REFLECTIVITY_TEXTURE_TYPE);
-                const reflectivityIndex = this._prePassRenderer.getIndex(Constants.PREPASS_SPECULARGLOSSINESS_EQUIVALENT_TEXTURE_TYPE);
+                const reflectivityIndex = this._prePassRenderer.getIndex(Constants.PREPASS_REFLECTIVITY_TEXTURE_TYPE);
+                // const reflectivityIndex = this._prePassRenderer.getIndex(Constants.PREPASS_SPECULARGLOSSINESS_EQUIVALENT_TEXTURE_TYPE);
                 // const albedoIndex = this._prePassRenderer.getIndex(Constants.PREPASS_ALBEDO_SQRT_TEXTURE_TYPE);
 
                 effect.setTexture("normalSampler", this._prePassRenderer.getRenderTarget().textures[normalIndex]);
