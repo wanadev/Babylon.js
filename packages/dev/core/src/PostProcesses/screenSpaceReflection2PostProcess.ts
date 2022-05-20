@@ -53,7 +53,17 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
      * Gets or sets the thickness value used as tolerance when computing the intersection between the reflected ray and the scene. 
      */
     @serialize()
-    public thickness: number = 0.05;
+    public thickness: number = 0.2;
+    /**
+     * Gets or sets the current reflection strength. 1.0 is an ideal value but can be increased/decreased for particular results.
+     */
+    @serialize()
+    public strength: number = 1.0;
+    /**
+     * Gets or sets the falloff exponent used while computing fresnel. More the exponent is high, more the reflections will be discrete.
+     */
+    @serialize()
+    public falloffExponent: number = 1.0;
 
     
     @serialize()
@@ -118,7 +128,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
     // }
 
     private renderSpecularTarget : RenderTargetTexture;
-    private renderMetallicTarget : RenderTargetTexture;
+    // private renderMetallicTarget : RenderTargetTexture;
 
     private _forceGeometryBuffer: boolean = false;
     private get _geometryBufferRenderer(): Nullable<GeometryBufferRenderer> {
@@ -175,8 +185,8 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         super(
             name, 
             'screenSpaceReflection2',
-            ["projection", "view", "maxDistance", "resolution", "steps", "thickness", "minZ", "maxZ", "changeProperties"], 
-            ["textureSampler", "normalSampler", "depthSampler", "positionSampler", "specularMap", "metallicMap", "cameraPos", "backUpSampler", "albedoSampler"], 
+            ["projection", "view", "maxDistance", "resolution", "steps", "thickness", "strength", "falloffExponent", "minZ", "maxZ", "changeProperties"], 
+            ["textureSampler", "normalSampler", "depthSampler", "positionSampler", "specularMap", "cameraPos", "backUpSampler", "albedoSampler"], 
             options, 
             camera, 
             samplingMode, 
@@ -207,17 +217,14 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             // Our own 'prePass'
             this.renderSpecularTarget = new RenderTargetTexture("specular to texture", {height: engine.getRenderHeight() * this._quality,  width: engine.getRenderWidth() * this._quality}, scene);
             scene.customRenderTargets.push(this.renderSpecularTarget);
-        
-            this.renderMetallicTarget = new RenderTargetTexture("metallic to texture", {height: engine.getRenderHeight() * this._quality,  width: engine.getRenderWidth() * this._quality}, scene);
-            scene.customRenderTargets.push(this.renderMetallicTarget);
             
             scene.meshes.forEach ((mesh) => {
-                this._iterateOverTheSceneMeshes(mesh, scene, this.renderSpecularTarget, this.renderMetallicTarget);
+                this._iterateOverTheSceneMeshes(mesh, scene, this.renderSpecularTarget);//, this.renderMetallicTarget);
             })   
 
             // When new mesh : add the mesh (and submeshes..) to the RTT.renderList 
             this._scene.onNewMeshAddedObservable.add( (newMesh) => {
-                this._iterateOverTheSceneMeshes(newMesh, scene, this.renderSpecularTarget, this.renderMetallicTarget);
+                this._iterateOverTheSceneMeshes(newMesh, scene, this.renderSpecularTarget);//, this.renderMetallicTarget);
             })
             
             // When mesh removal : remove the mesh from the RTT.renderList 
@@ -228,15 +235,9 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                         this.renderSpecularTarget.renderList?.splice(idxSpec, 1);
                     }
                 }
-                if(this.renderMetallicTarget.renderList){
-                    const idxMetal = this.renderMetallicTarget.renderList.indexOf(mesh);
-                    if (idxMetal != -1){
-                        this.renderMetallicTarget.renderList?.splice(idxMetal, 1);
-                    }  
-                }
             })
         }
-        else { // doesn't work ! incompatibility with RTT and PrePass + metallic not taken into account in prepass :(
+        else { 
             const prePassRenderer = scene.enablePrePassRenderer();
             prePassRenderer?.markAsDirty();
             this._prePassEffectConfiguration = new ScreenSpaceReflections2Configuration();
@@ -261,7 +262,6 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 effect.setTexture("depthSampler", this._geometryBufferRenderer!.getGBuffer().textures[0]);
 
                 effect.setTexture("specularMap", this.renderSpecularTarget); 
-                effect.setTexture("metallicMap", this.renderMetallicTarget); 
             }
             else if (this._prePassRenderer) { // doesn't work ! incompatibility with RTT and PrePass + metallic not taken into account in prepass :(
                 // Samplers
@@ -269,15 +269,11 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 const positionIndex = this._prePassRenderer.getIndex(Constants.PREPASS_POSITION_TEXTURE_TYPE);
                 const depthIndex = this._prePassRenderer.getIndex(Constants.PREPASS_DEPTH_TEXTURE_TYPE);
                 const reflectivityIndex = this._prePassRenderer.getIndex(Constants.PREPASS_REFLECTIVITY_TEXTURE_TYPE);
-                // const reflectivityIndex = this._prePassRenderer.getIndex(Constants.PREPASS_SPECULARGLOSSINESS_EQUIVALENT_TEXTURE_TYPE);
-                // const albedoIndex = this._prePassRenderer.getIndex(Constants.PREPASS_ALBEDO_SQRT_TEXTURE_TYPE);
 
                 effect.setTexture("normalSampler", this._prePassRenderer.getRenderTarget().textures[normalIndex]);
                 effect.setTexture("positionSampler", this._prePassRenderer.getRenderTarget().textures[positionIndex]);
                 effect.setTexture("depthSampler", this._prePassRenderer.getRenderTarget().textures[depthIndex]);
                 effect.setTexture("specularMap", this._prePassRenderer.getRenderTarget().textures[reflectivityIndex]);
-                // effect.setTexture("albedoSampler", this._prePassRenderer.getRenderTarget().textures[albedoIndex]);
-                // effect.setTexture("metallicMap", this._prePassRenderer.getRenderTarget().textures[reflectivityIndex]); // TODO changen, for debug only
             }
 
             if (this._backUpTextureSkybox){
@@ -301,6 +297,8 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             effect.setFloat("resolution", this.resolution);
             effect.setInt("steps", this.steps);
             effect.setFloat("thickness", this.thickness);
+            effect.setFloat("strength", this.strength);
+            effect.setFloat("falloffExponent", this.falloffExponent);
 
             effect.setBool("changeProperties", this.changeProperties);
 
@@ -328,25 +326,18 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
 
     // recursive iteration over meshes
     private _iterateOverTheSceneMeshes(mesh : AbstractMesh, scene : Scene,
-                                        renderSpecularTarget : RenderTargetTexture,
-                                        renderMetallicTarget : RenderTargetTexture) {
+                                        renderSpecularTarget : RenderTargetTexture){
 
         this._whenAbsMeshReady(mesh).then(() => { // wait until mesh is ready before updating RTT.renderList, otherwise the texture is not taken into account
             this._computeSpecularMap(mesh, scene, renderSpecularTarget);
-            this._computeMetallicMap(mesh, scene, renderMetallicTarget);
             
             mesh.onMaterialChangedObservable.add(() => { // When change in material : remove the mesh and add the new one to the RTT.renderList 
                 const idxSpec = renderSpecularTarget.renderList?.indexOf(mesh);
                 if (idxSpec && idxSpec != -1){
                     renderSpecularTarget.renderList?.splice(idxSpec, 1);
                 }
-                const idxMetal = renderMetallicTarget.renderList?.indexOf(mesh);
-                if (idxMetal && idxMetal != -1){
-                    renderMetallicTarget.renderList?.splice(idxMetal, 1);
-                }
                 this._whenAbsMeshReady(mesh).then(() => { // wait until mesh is ready before updating RTT.renderList, otherwise the texture is not taken into account
                     this._computeSpecularMap(mesh, scene, renderSpecularTarget);
-                    this._computeMetallicMap(mesh, scene, renderMetallicTarget);
     
                 })
             })
@@ -355,7 +346,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 const subM = mesh.getChildMeshes();
                 for (let i = 0; i < subM.length; i++) {
                     const m = subM[i];
-                    this._iterateOverTheSceneMeshes(m, scene, renderSpecularTarget, renderMetallicTarget);
+                    this._iterateOverTheSceneMeshes(m, scene, renderSpecularTarget);
                     return;
                 }
             } else {
@@ -545,63 +536,6 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         }
         renderSpecularTarget.setMaterialForRendering(m, specularMapShader);
         renderSpecularTarget.renderList?.push(m);
-    }
-    
-    private _computeMetallicMap(m: AbstractMesh, scene: Scene, renderMetallicTarget : RenderTargetTexture) {
-
-        const defines: string[] = [];
-
-        const metallicMapShader = new ShaderMaterial(
-            "metallicMapShader",
-            scene,
-            {
-                vertex: "metallicMap",
-                fragment: "metallicMap",
-            },
-            {
-                attributes: ["position", "normal", "uv"],
-                uniforms: ["world", "worldView", "worldViewProjection", "view", "projection", "textureMatrix",
-                            "metallic", "ORMTexture", "indexOfRefraction"],
-                defines : defines, // will be fill in according to given material data
-            },
-        );
-
-        if (m.material) { // there is a material
-
-            // for PBR materials: cf. https://doc.babylonjs.com/divingDeeper/materials/using/masterPBR
-            if (m.material instanceof PBRMetallicRoughnessMaterial) {
-                // if it is a PBR material in MetallicRoughness Mode:
-                if (m.material.metallicRoughnessTexture != null) {
-                    metallicMapShader.setTexture("ORMTexture", m.material.metallicRoughnessTexture);
-                    defines.push("#define ORMTEXTURE");
-                    metallicMapShader.setMatrix("textureMatrix", (m.material.metallicRoughnessTexture as Texture).getTextureMatrix());                  
-                }
-                if (m.material.metallic != null) {
-                    metallicMapShader.setFloat("metallic", m.material.metallic);
-                    defines.push("#define METALLIC");
-                }
-            }
-            else if (m.material instanceof PBRMaterial) {
-                // if it is the bigger PBRMaterial
-                if (m.material.metallicTexture != null) {
-                    metallicMapShader.setTexture("ORMTexture", m.material.metallicTexture);
-                    defines.push("#define ORMTEXTURE");
-                    metallicMapShader.setMatrix("textureMatrix", (m.material.metallicTexture as Texture).getTextureMatrix());         
-                }
-                if (m.material.metallic != null) {
-                    metallicMapShader.setFloat("metallic", m.material.metallic);
-                    defines.push("#define METALLIC");
-                }
-                if (m.material.indexOfRefraction != null) {
-                    metallicMapShader.setFloat("indexOfRefraction", m.material.indexOfRefraction);
-                    defines.push("#define INDEXOFREFRACTION");
-                }
-            }
-            // if there is no metallic component, nothing is binded and we return a totally black texture
-    
-            renderMetallicTarget.setMaterialForRendering(m, metallicMapShader);
-            renderMetallicTarget.renderList?.push(m);
-        }
     }
 }
 

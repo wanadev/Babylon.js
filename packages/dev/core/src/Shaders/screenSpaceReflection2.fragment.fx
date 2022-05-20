@@ -21,6 +21,9 @@ uniform float maxDistance;
 uniform float resolution;
 uniform int steps;
 uniform float thickness;
+uniform float strength;
+uniform float falloffExponent;
+
 uniform bool changeProperties;
 
 #endif // SSR_SUPPORTED
@@ -39,6 +42,7 @@ varying vec2 vUV;
 
 // Structs
 struct ReflectionInfo {
+    float visibilityBackup;
     float visibility;
     vec2 coords;
     bool miss;
@@ -81,9 +85,9 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
             info.miss = true;
             info.visibility = 0.0;
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
-                info.visibility = 0.6;
+                info.visibilityBackup = 1.0;
             #else
-                info.visibility = 0.0; 
+                info.visibilityBackup = 0.0; 
             #endif
             return info;
         }
@@ -93,9 +97,9 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
             info.miss = true;
             info.visibility = 0.0;
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
-                info.visibility = 0.6;
+                info.visibilityBackup = 1.0;
             #else
-                info.visibility = 0.0; 
+                info.visibilityBackup = 0.0; 
             #endif
             return info;
         }
@@ -160,7 +164,7 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
         // perspective-correct interpolation
         viewDistance = (startVS.z * endVS.z) / mix(endVS.z, startVS.z, search1);
 
-        if (changeProperties){
+        if (changeProperties){ // TODO change
             tol += 0.002;
         }
 
@@ -175,13 +179,13 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
             hit0 = 1.0;
             break;
         } else if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0){ 
-            info.coords = uv;
+            info.coords = vUV;
             info.miss = true;
             info.visibility = 0.0;
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
-                info.visibility = 0.5;
+                info.visibilityBackup = 1.0;
             #else
-                info.visibility = 0.0; 
+                info.visibilityBackup = 0.0; 
             #endif
             return info;
         } else {    
@@ -197,13 +201,13 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     // end of the first pass
     
     if (hit0 == 0.0){ // if no hit during the first pass, we skip the second pass
-        info.coords = uv;
+        info.coords = vUV;
         info.miss = true;
         info.visibility = 0.0;
         #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
-            info.visibility = 0.5;
+            info.visibilityBackup = 1.0;
         #else
-            info.visibility = 0.0; 
+            info.visibilityBackup = 0.0; 
         #endif
         return info;
     }
@@ -229,13 +233,13 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
             hit1 = 1.0;
             search1 = search0 + ((search1 - search0) / 2.0);
         } else if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0){ 
-            info.coords = uv;
+            info.coords = vUV;
             info.miss = true;
             info.visibility = 0.0;
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
-                info.visibility = 0.5;
+                info.visibilityBackup = 1.0;
             #else
-                info.visibility = 0.0; 
+                info.visibilityBackup = 0.0; 
             #endif
             return info;
         } else {
@@ -247,27 +251,36 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     // end of the second pass
        
     // compute how much the reflection is visible
-    float visibility;
     if (hit1 == 0.0){
          #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
-            visibility = 0.5;
+            info.visibilityBackup = 1.0;
         #else
-            visibility = 0.0; 
+            info.visibilityBackup = 0.0; 
         #endif
-        visibility = 0.0; 
+        info.visibility = 0.0;
         info.miss = true;
     } else {
-        tol = thickness + 0.0005 * pow(distance(hitCoordVS, vec3(0.0, 0.0, 0.0)), 1.5);
-        visibility = texture2D(positionSampler, uv).w // alpha value of the reflected scene position 
-            * (1.0 - max ( dot(-normalize(hitCoordVS), dirVS), 0.0)) // to fade out the reflexion as the reflected direction point to the camera's position (hit behind the camera)
-            * (1.0 - clamp (depth/tol, 0.0, 1.0)) // since the hit point is not always precisely found, we fade out the reflected color if we aren't precise enough 
-            * (1.0 - clamp ( distance(mix(hitCoordVS, endVS.xyz, search1) , hitCoordVS)/(1.0 * maxDistance), 0.0, 1.0)); // the reflection should be sharper when near from the starting point
-
         info.miss = false;
+        if (dot(dirVS, normalize(texture2D(normalSampler, uv).xyz)) > 0.0){ // no reflection when hit backface of a mesh
+            info.visibilityBackup = 0.0;
+            info.visibility = 0.0;
+            info.coords = uv;
+            return info;
+        }
+        // tol = thickness + 0.0005 * pow(distance(hitCoordVS, vec3(0.0, 0.0, 0.0)), 1.5);
+        info.visibility = texture2D(positionSampler, uv).w // alpha value of the reflected scene position 
+            * (1.0 - max ( dot(-normalize(hitCoordVS), dirVS), 0.0)) // to fade out the reflexion as the reflected direction point to the camera's position (hit behind the camera)
+            * (1.0 - clamp ( length(mix(hitCoordVS, endVS.xyz, search1) - hitCoordVS)/(maxDistance), 0.0, 1.0)) // the reflection should be sharper when near from the starting point
+            * (1.0 - clamp (depth/tol, 0.0, 1.0)); // since the hit point is not always precisely found, we fade out the reflected color if we aren't precise enough 
+
+        #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
+            info.visibilityBackup = 1.0 - info.visibility; // complementary reflectivityColor
+        #else
+            info.visibilityBackup = 0.0; 
+        #endif
     }
 
     info.coords = uv;
-    info.visibility = visibility;
 
     return info;
 }
@@ -312,21 +325,15 @@ void main(void)
     #ifdef SSR_SUPPORTED
 
     vec4 originalFull = texture2D(textureSampler, vUV);
-
     vec3 original = originalFull.rgb;
-    // vec4 albedo = texture2D(albedoSampler, vUV);
-    // vec3 albedo = original; // TODO remove when pre-pass activated
     vec3 spec = texture2D(specularMap, vUV).rgb;
-    // float metallic = texture2D(metallicMap, vUV).b;
-    // float indexOfRefraction = texture2D(metallicMap, vUV).r;
-    float roughness = 1.0 - texture2D(specularMap, vUV).a;
 
-    // Translate Metallic-Roughness model to Specular-Glossiness model according to https://marmoset.co/posts/pbr-texture-conversion/ 
-    // if (metallic != 0.0){
-    //     spec = mix(vec3(0.04), albedo.rbg, metallic); // metallic texture acts as a mask when determining specularity
-    //     // how to take alpha into account ?
-    //     // spec *= albedo.a;
-    // }
+    if (dot(spec, vec3(1.0)) <= 0.0){
+        gl_FragColor = texture2D(textureSampler, vUV); // no reflectivity, no need to compute reflection
+        return;
+    }
+
+    float roughness = 1.0 - texture2D(specularMap, vUV).a;
 
     // Get coordinates of the direction of the reflected ray
     // according to the pixel's position and normal.
@@ -352,47 +359,51 @@ void main(void)
     
     vec2 texSize = gl_FragCoord.xy / vUV;
 
-   
     vec3 jitt = mix(vec3(0.0), hash(position), 0.1 * roughness); // hash(position) represents a random vector3, jitt represents a bias to simulate roughness (light deviation)
     ReflectionInfo info = getReflectionInfo2DRayMarching(reflected + jitt, position, texSize);
 
     float visibility = clamp(info.visibility, 0.0, 1.0);  
-  
+    float visibilityBackup = clamp(info.visibilityBackup, 0.0, 1.0);
+    
     // get the color of the reflection
     vec3 reflectedColor;
-    if (info.miss){
-        #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
-            vec3 jitt = mix(vec3(0.0), hash(position), 0.1 * roughness);
-            // compute reflection in view space and then come back to world space
-            vec3 coord = vec3( inverse(view) * vec4(reflected, 0.0));
+    
+    #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
+        // vec3 jitt = mix(vec3(0.0), hash(position), 0.1 * roughness);
+        // compute reflection in view space and then come back to world space
+        vec3 coord = vec3( inverse(view) * vec4(reflected, 0.0));
 
-            #ifdef BACKUP_TEXTURE_PROBE
-                coord.y *= -1.0;
-            #endif
-                
-            #ifdef RIGHT_HANDED_SCENE
-                coord.z *= -1.0;
-            #endif
-            reflectedColor = textureCube(backUpSampler, coord + jitt).xyz;
-        #else 
+        #ifdef BACKUP_TEXTURE_PROBE
+            coord.y *= -1.0;
+        #endif
+            
+        #ifdef RIGHT_HANDED_SCENE
+            coord.z *= -1.0;
+        #endif
+        reflectedColor = textureCube(backUpSampler, coord + jitt).xyz * visibilityBackup;
+
+        if (!info.miss){
+            reflectedColor += texture2D(textureSampler, info.coords).xyz * visibility;
+        }
+    #else 
+        if (info.miss){
             gl_FragColor = texture2D(textureSampler, vUV);
-        #endif 
-    } else {
-        reflectedColor = texture2D(textureSampler, info.coords).xyz;
-    }
-
-    vec2 dCoords = smoothstep(0.2, 0.6, abs(vec2(0.5, 0.5) - info.coords.xy));
+            return;
+        } else {
+            reflectedColor = texture2D(textureSampler, info.coords).xyz;
+        }
+    #endif 
+    
+    vec2 dCoords = smoothstep(vec2(0.2), vec2(0.6), clamp(abs(vec2(0.5, 0.5) - info.coords.xy), vec2(0.0), vec2(1.0))); // HermiteInterpolation
     float screenEdgefactor = clamp(1.0 - (dCoords.x + dCoords.y), 0.0, 1.0);
     
-    // Fresnel F0
+    // Fresnel
     // "The specular map contains F0 for dielectrics and the reflectance value for raw metal" https://substance3d.adobe.com/tutorials/courses/the-pbr-guide-part-2 
-    // at the end of the day: FO computed as suggested in https://learnopengl.com/PBR/Theory  
-    // if Specular-Glossiness model: F0 = spec
-    // if Metallic-Roughness model: F0 = mix(0.04, albedo, metallic)
     vec3 F0 = spec;
   
     vec3 reflectionCoeff = fresnelSchlick(max(dot(unitNormal, unitPosition), 0.0), F0)
-                            * clamp(spec * screenEdgefactor * visibility, 0.0, 0.9); 
+                            * vec3(pow(spec.x * strength, falloffExponent), pow(spec.y * strength, falloffExponent), pow(spec.z * strength, falloffExponent))
+                            * clamp(screenEdgefactor * (visibility + visibilityBackup), 0.0, 0.9); 
 
     // // *********************** SHADING *******************************
 

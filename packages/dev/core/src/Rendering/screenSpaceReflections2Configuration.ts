@@ -24,7 +24,5 @@ export class ScreenSpaceReflections2Configuration implements PrePassEffectConfig
         Constants.PREPASS_POSITION_TEXTURE_TYPE, 
         Constants.PREPASS_DEPTH_TEXTURE_TYPE, 
         Constants.PREPASS_REFLECTIVITY_TEXTURE_TYPE,
-        // Constants.PREPASS_ALBEDO_SQRT_TEXTURE_TYPE
-        // Constants.PREPASS_SPECULARGLOSSINESS_EQUIVALENT_TEXTURE_TYPE,
     ];
 }
