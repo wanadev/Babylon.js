@@ -9,8 +9,8 @@ import { PBRSpecularGlossinessMaterial } from "../Materials/PBR/pbrSpecularGloss
 import { ShaderMaterial } from "../Materials/shaderMaterial";
 import { PostProcess, PostProcessOptions } from "./postProcess";
 import { Constants } from "../Engines/constants";
-import { GeometryBufferRenderer } from '../Rendering/geometryBufferRenderer';
-import { serialize, SerializationHelper } from '../Misc/decorators';
+import { GeometryBufferRenderer } from "../Rendering/geometryBufferRenderer";
+import { serialize, SerializationHelper } from "../Misc/decorators";
 import { PrePassRenderer } from "../Rendering/prePassRenderer";
 import { ScreenSpaceReflections2Configuration } from "../Rendering/screenSpaceReflections2Configuration";
 
@@ -36,10 +36,10 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
      * Gets or sets the maxDistance used to define how far we look for reflection during the ray-marching on the reflected ray
      */
     @serialize()
-    public maxDistance: number = 10.0; 
+    public maxDistance: number = 10.0;
     /**
-     * Gets or sets the resolution used for the first pass of the 2D ray marching algorithm. 
-     * Controls how many fragments are skipped while marching the reflected ray. Typically in interval [0.1, 1.0]. 
+     * Gets or sets the resolution used for the first pass of the 2D ray marching algorithm.
+     * Controls how many fragments are skipped while marching the reflected ray. Typically in interval [0.1, 1.0].
      * If resolution equals 0.0, every fragments are skiped and this results in no reflection at all.
      */
     @serialize()
@@ -50,7 +50,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
     @serialize()
     public steps: number = 15;
     /**
-     * Gets or sets the thickness value used as tolerance when computing the intersection between the reflected ray and the scene. 
+     * Gets or sets the thickness value used as tolerance when computing the intersection between the reflected ray and the scene.
      */
     @serialize()
     public thickness: number = 0.2;
@@ -64,49 +64,53 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
      */
     @serialize()
     public falloffExponent: number = 1.0;
-
-    
+    /**
+     * Gets or sets the distance at whitch the SSR algorithme no longer applies.
+     */
     @serialize()
-    private _backUpTextureSkybox: Nullable<CubeTexture> = null; 
+    public distanceFade: number = 100.0;
+
+    @serialize()
+    private _backUpTextureSkybox: Nullable<CubeTexture> = null;
 
     /**
      * Gets the Skybox cubeTexture used to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
      */
-    get backUpTextureSkybox():Nullable<CubeTexture> {
+    get backUpTextureSkybox(): Nullable<CubeTexture> {
         return this._backUpTextureSkybox;
     }
 
     /**
      * Sets the Skybox cubeTexture to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
      */
-    set backUpTextureSkybox(backUpTex:Nullable<CubeTexture>) {
+    set backUpTextureSkybox(backUpTex: Nullable<CubeTexture>) {
         this._backUpTextureSkybox = backUpTex;
         this._updateEffectDefines();
     }
 
     @serialize()
-    private _backUpTextureProbe: Nullable<CubeTexture> = null; 
+    private _backUpTextureProbe: Nullable<CubeTexture> = null;
 
     /**
      * Gets the Probe cubeTexture used to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
      */
-    public get backUpTextureProbe():Nullable<CubeTexture> {
+    public get backUpTextureProbe(): Nullable<CubeTexture> {
         return this._backUpTextureProbe;
     }
 
     /**
      * Sets a Probe cubeTexture to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
      */
-    public set backUpTextureProbe(backUpTex:Nullable<CubeTexture>) {
+    public set backUpTextureProbe(backUpTex: Nullable<CubeTexture>) {
         this._backUpTextureProbe = backUpTex;
         this._updateEffectDefines();
     }
 
     /**
-     * Gets or sets a boolean which defines if the algorithme must increase the rendering quality according to the depth view 
+     * Gets or sets a boolean which defines if the algorithme must increase the rendering quality according to the depth view
      */
     @serialize()
-    public changeProperties: boolean = false; 
+    public changeProperties: boolean = false;
 
     /**
      * Defines the reflection quality through the size of the renderTargetTexture we use.
@@ -114,20 +118,20 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
      */
     // todo remove RTT and update comments
     // @serialize()
-    private _quality: number = 0.75; 
+    private _quality: number = 0.75;
 
     // get quality():number {
     //     return this._quality;
     // }
     // set quality(val:number) {
-    //     // clamp val to [0,1] in case the user in not aware about the way to set the quality 
+    //     // clamp val to [0,1] in case the user in not aware about the way to set the quality
     //     //(and avoid to create a renderTargetTexture of size 10000 * size of canva)
-    //     this._quality = val <= 0.0 ? 0.0 
-    //                     : val >= 1.0 ? 1.0 
+    //     this._quality = val <= 0.0 ? 0.0
+    //                     : val >= 1.0 ? 1.0
     //                     : val;
     // }
 
-    private renderSpecularTarget : RenderTargetTexture;
+    private renderSpecularTarget: RenderTargetTexture;
     // private renderMetallicTarget : RenderTargetTexture;
 
     private _forceGeometryBuffer: boolean = false;
@@ -171,38 +175,38 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
      * @param forceGeometryBuffer If this post process should use geometry buffer instead of prepass (default: false)
      */
     constructor(
-        name: string, 
-        scene: Scene, 
-        options: number | PostProcessOptions, 
-        camera: Nullable<Camera>, 
-        engine: Engine, 
-        samplingMode?: number, 
-        reusable?: boolean, 
-        textureType: number = Constants.TEXTURETYPE_UNSIGNED_INT, 
-        blockCompilation = true, 
-        forceGeometryBuffer = false) {
-
+        name: string,
+        scene: Scene,
+        options: number | PostProcessOptions,
+        camera: Nullable<Camera>,
+        engine: Engine,
+        samplingMode?: number,
+        reusable?: boolean,
+        textureType: number = Constants.TEXTURETYPE_UNSIGNED_INT,
+        blockCompilation = true,
+        forceGeometryBuffer = false
+    ) {
         super(
-            name, 
-            'screenSpaceReflection2',
-            ["projection", "view", "maxDistance", "resolution", "steps", "thickness", "strength", "falloffExponent", "minZ", "maxZ", "changeProperties"], 
-            ["textureSampler", "normalSampler", "depthSampler", "positionSampler", "specularMap", "cameraPos", "backUpSampler", "albedoSampler"], 
-            options, 
-            camera, 
-            samplingMode, 
-            engine, 
+            name,
+            "screenSpaceReflection2",
+            ["projection", "view", "maxDistance", "resolution", "steps", "thickness", "strength", "falloffExponent", "distanceFade", "minZ", "maxZ", "changeProperties"],
+            ["textureSampler", "normalSampler", "depthSampler", "positionSampler", "specularMap", "cameraPos", "backUpSampler", "albedoSampler"],
+            options,
+            camera,
+            samplingMode,
+            engine,
             reusable,
             "#define SSR_SUPPORTED\n",
-            textureType, 
-            undefined, 
-            null, 
+            textureType,
+            undefined,
+            null,
             blockCompilation
         );
 
-        if (!camera){
+        if (!camera) {
             return;
         }
-      
+
         // PrePass
         this._forceGeometryBuffer = forceGeometryBuffer;
         this._forceGeometryBuffer = false; //forceGeometryBuffer; // TODO remove when problem solved
@@ -212,43 +216,45 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             if (geometryBufferRenderer) {
                 if (geometryBufferRenderer.isSupported) {
                     geometryBufferRenderer.enablePosition = true;
-                } 
+                }
             }
             // Our own 'prePass'
-            this.renderSpecularTarget = new RenderTargetTexture("specular to texture", {height: engine.getRenderHeight() * this._quality,  width: engine.getRenderWidth() * this._quality}, scene);
+            this.renderSpecularTarget = new RenderTargetTexture(
+                "specular to texture",
+                { height: engine.getRenderHeight() * this._quality, width: engine.getRenderWidth() * this._quality },
+                scene
+            );
             scene.customRenderTargets.push(this.renderSpecularTarget);
-            
-            scene.meshes.forEach ((mesh) => {
-                this._iterateOverTheSceneMeshes(mesh, scene, this.renderSpecularTarget);//, this.renderMetallicTarget);
-            })   
 
-            // When new mesh : add the mesh (and submeshes..) to the RTT.renderList 
-            this._scene.onNewMeshAddedObservable.add( (newMesh) => {
-                this._iterateOverTheSceneMeshes(newMesh, scene, this.renderSpecularTarget);//, this.renderMetallicTarget);
-            })
-            
-            // When mesh removal : remove the mesh from the RTT.renderList 
-            this._scene.onMeshRemovedObservable.add( (mesh) => {
-                if(this.renderSpecularTarget.renderList) {
+            scene.meshes.forEach((mesh) => {
+                this._iterateOverTheSceneMeshes(mesh, scene, this.renderSpecularTarget); //, this.renderMetallicTarget);
+            });
+
+            // When new mesh : add the mesh (and submeshes..) to the RTT.renderList
+            this._scene.onNewMeshAddedObservable.add((newMesh) => {
+                this._iterateOverTheSceneMeshes(newMesh, scene, this.renderSpecularTarget); //, this.renderMetallicTarget);
+            });
+
+            // When mesh removal : remove the mesh from the RTT.renderList
+            this._scene.onMeshRemovedObservable.add((mesh) => {
+                if (this.renderSpecularTarget.renderList) {
                     const idxSpec = this.renderSpecularTarget.renderList.indexOf(mesh);
-                    if (idxSpec != -1){
+                    if (idxSpec != -1) {
                         this.renderSpecularTarget.renderList?.splice(idxSpec, 1);
                     }
                 }
-            })
-        }
-        else { 
+            });
+        } else {
             const prePassRenderer = scene.enablePrePassRenderer();
             prePassRenderer?.markAsDirty();
             this._prePassEffectConfiguration = new ScreenSpaceReflections2Configuration();
         }
 
         this._isSceneRightHanded = scene.useRightHandedSystem;
-        this._updateEffectDefines();      
+        this._updateEffectDefines();
 
         // On apply, send uniforms
         this.onApply = (effect) => {
-
             if (!this._prePassRenderer && !this._geometryBufferRenderer) {
                 return;
             }
@@ -256,14 +262,14 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             if (this._geometryBufferRenderer) {
                 // Samplers
                 const positionIndex = this._geometryBufferRenderer.getTextureIndex(GeometryBufferRenderer.POSITION_TEXTURE_TYPE);
-                
+
                 effect.setTexture("normalSampler", this._geometryBufferRenderer!.getGBuffer().textures[1]);
                 effect.setTexture("positionSampler", this._geometryBufferRenderer!.getGBuffer().textures[positionIndex]);
                 effect.setTexture("depthSampler", this._geometryBufferRenderer!.getGBuffer().textures[0]);
 
-                effect.setTexture("specularMap", this.renderSpecularTarget); 
-            }
-            else if (this._prePassRenderer) { // doesn't work ! incompatibility with RTT and PrePass + metallic not taken into account in prepass :(
+                effect.setTexture("specularMap", this.renderSpecularTarget);
+            } else if (this._prePassRenderer) {
+                // doesn't work ! incompatibility with RTT and PrePass + metallic not taken into account in prepass :(
                 // Samplers
                 const normalIndex = this._prePassRenderer.getIndex(Constants.PREPASS_NORMAL_TEXTURE_TYPE);
                 const positionIndex = this._prePassRenderer.getIndex(Constants.PREPASS_POSITION_TEXTURE_TYPE);
@@ -276,10 +282,9 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 effect.setTexture("specularMap", this._prePassRenderer.getRenderTarget().textures[reflectivityIndex]);
             }
 
-            if (this._backUpTextureSkybox){
+            if (this._backUpTextureSkybox) {
                 effect.setTexture("backUpSampler", this._backUpTextureSkybox);
-            }
-            else if (this._backUpTextureProbe){
+            } else if (this._backUpTextureProbe) {
                 effect.setTexture("backUpSampler", this._backUpTextureProbe);
             }
 
@@ -293,12 +298,13 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             effect.setMatrix("view", viewMatrix);
 
             effect.setFloat("maxDistance", this.maxDistance);
-            
+
             effect.setFloat("resolution", this.resolution);
             effect.setInt("steps", this.steps);
             effect.setFloat("thickness", this.thickness);
             effect.setFloat("strength", this.strength);
             effect.setFloat("falloffExponent", this.falloffExponent);
+            effect.setFloat("distanceFade", this.distanceFade);
 
             effect.setBool("changeProperties", this.changeProperties);
 
@@ -307,41 +313,39 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         };
     }
 
-    private _whenAllReady (mesh : AbstractMesh, resolve : any) {
-       
+    private _whenAllReady(mesh: AbstractMesh, resolve: any) {
         if (mesh.isReady()) {
             resolve();
             return;
         } else {
-            mesh.onReady = () => resolve(); 
+            mesh.onReady = () => resolve();
         }
     }
 
-    private _whenAbsMeshReady (mesh : AbstractMesh) {
-        return new Promise((resolve : any, reject : any) => {
-             
+    private _whenAbsMeshReady(mesh: AbstractMesh) {
+        return new Promise((resolve: any, reject: any) => {
             this._whenAllReady(mesh, () => resolve());
-        })
+        });
     }
 
     // recursive iteration over meshes
-    private _iterateOverTheSceneMeshes(mesh : AbstractMesh, scene : Scene,
-                                        renderSpecularTarget : RenderTargetTexture){
-
-        this._whenAbsMeshReady(mesh).then(() => { // wait until mesh is ready before updating RTT.renderList, otherwise the texture is not taken into account
+    private _iterateOverTheSceneMeshes(mesh: AbstractMesh, scene: Scene, renderSpecularTarget: RenderTargetTexture) {
+        this._whenAbsMeshReady(mesh).then(() => {
+            // wait until mesh is ready before updating RTT.renderList, otherwise the texture is not taken into account
             this._computeSpecularMap(mesh, scene, renderSpecularTarget);
-            
-            mesh.onMaterialChangedObservable.add(() => { // When change in material : remove the mesh and add the new one to the RTT.renderList 
+
+            mesh.onMaterialChangedObservable.add(() => {
+                // When change in material : remove the mesh and add the new one to the RTT.renderList
                 const idxSpec = renderSpecularTarget.renderList?.indexOf(mesh);
-                if (idxSpec && idxSpec != -1){
+                if (idxSpec && idxSpec != -1) {
                     renderSpecularTarget.renderList?.splice(idxSpec, 1);
                 }
-                this._whenAbsMeshReady(mesh).then(() => { // wait until mesh is ready before updating RTT.renderList, otherwise the texture is not taken into account
+                this._whenAbsMeshReady(mesh).then(() => {
+                    // wait until mesh is ready before updating RTT.renderList, otherwise the texture is not taken into account
                     this._computeSpecularMap(mesh, scene, renderSpecularTarget);
-    
-                })
-            })
-            
+                });
+            });
+
             if (mesh.getChildMeshes()) {
                 const subM = mesh.getChildMeshes();
                 for (let i = 0; i < subM.length; i++) {
@@ -352,7 +356,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             } else {
                 return;
             }
-        })    
+        });
     }
 
     private _updateEffectDefines(): void {
@@ -377,12 +381,12 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
     }
 
     /**
-     * 
-     * @param parsedPostProcess 
-     * @param targetCamera 
-     * @param scene 
-     * @param rootUrl 
-     * @returns 
+     *
+     * @param parsedPostProcess
+     * @param targetCamera
+     * @param scene
+     * @param rootUrl
+     * @returns
      */
     public static _Parse(parsedPostProcess: any, targetCamera: Camera, scene: Scene, rootUrl: string) {
         return SerializationHelper.Parse(
@@ -404,9 +408,8 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         );
     }
 
-    private _computeSpecularMap(m: AbstractMesh, scene: Scene, renderSpecularTarget : RenderTargetTexture) {
-
-        const defines: string[] = []; 
+    private _computeSpecularMap(m: AbstractMesh, scene: Scene, renderSpecularTarget: RenderTargetTexture) {
+        const defines: string[] = [];
 
         const specularMapShader = new ShaderMaterial(
             "specularMapShader",
@@ -417,15 +420,30 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             },
             {
                 attributes: ["position", "normal", "uv"],
-                uniforms: ["world", "worldView", "worldViewProjection", "view", "projection",
-                            "albedoTextureMatrix", "albedoTextureMatrix",
-                            "ORMTexture", "metallic", "roughness", "albedoTexture", "albedoColor", 
-                            "specularGlossinessTexture", "glossiness", "reflectivityTexture", "reflectivityColor"],
-                defines : defines, // will be fill in according to given material data
-            },
+                uniforms: [
+                    "world",
+                    "worldView",
+                    "worldViewProjection",
+                    "view",
+                    "projection",
+                    "albedoTextureMatrix",
+                    "albedoTextureMatrix",
+                    "ORMTexture",
+                    "metallic",
+                    "roughness",
+                    "albedoTexture",
+                    "albedoColor",
+                    "specularGlossinessTexture",
+                    "glossiness",
+                    "reflectivityTexture",
+                    "reflectivityColor",
+                ],
+                defines: defines, // will be fill in according to given material data
+            }
         );
 
-        if (m.material) { // there is a material
+        if (m.material) {
+            // there is a material
 
             // for PBR materials: cf. https://doc.babylonjs.com/divingDeeper/materials/using/masterPBR
             if (m.material instanceof PBRMetallicRoughnessMaterial) {
@@ -445,34 +463,29 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 }
                 if (m.material.baseTexture != null) {
                     specularMapShader.setTexture("albedoTexture", m.material.baseTexture);
-                    defines.push("#define ALBEDOTEXTURE"); 
+                    defines.push("#define ALBEDOTEXTURE");
                     specularMapShader.setMatrix("albedoTextureMatrix", (m.material.baseTexture as Texture).getTextureMatrix());
-
                 } else if (m.material.baseColor != null) {
                     specularMapShader.setColor3("albedoColor", m.material.baseColor);
                     defines.push("#define ALBEDOCOLOR");
                 }
-
-            }
-            else if (m.material instanceof PBRSpecularGlossinessMaterial) {
+            } else if (m.material instanceof PBRSpecularGlossinessMaterial) {
                 // if it is a PBR material in Specular/Glossiness Mode:
                 if (m.material.specularGlossinessTexture != null) {
                     specularMapShader.setTexture("specularGlossinessTexture", m.material.specularGlossinessTexture);
                     defines.push("#define SPECULARGLOSSINESSTEXTURE");
                     specularMapShader.setMatrix("specTextureMatrix", (m.material.specularGlossinessTexture as Texture).getTextureMatrix());
-
                 } else {
                     if (m.material.specularColor != null) {
                         specularMapShader.setColor3("reflectivityColor", m.material.specularColor);
                         defines.push("#define REFLECTIVITYCOLOR");
-                     }
+                    }
                 }
                 if (m.material.glossiness != null) {
                     specularMapShader.setFloat("glossiness", m.material.glossiness);
                     defines.push("#define GLOSSINESSS");
                 }
-            }
-            else if (m.material instanceof PBRMaterial) {
+            } else if (m.material instanceof PBRMaterial) {
                 // if it is the bigger PBRMaterial
                 if (m.material.metallicTexture != null) {
                     specularMapShader.setTexture("ORMTexture", m.material.metallicTexture);
@@ -489,23 +502,22 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                     defines.push("#define ROUGHNESS");
                 }
 
-                if (m.material.roughness != null || m.material.metallic != null || m.material.metallicTexture != null){ // MetallicRoughness Model
+                if (m.material.roughness != null || m.material.metallic != null || m.material.metallicTexture != null) {
+                    // MetallicRoughness Model
                     if (m.material.albedoTexture != null) {
                         specularMapShader.setTexture("albedoTexture", m.material.albedoTexture);
-                        defines.push("#define ALBEDOTEXTURE");                       
+                        defines.push("#define ALBEDOTEXTURE");
                         specularMapShader.setMatrix("albedoTextureMatrix", (m.material.albedoTexture as Texture).getTextureMatrix());
-
                     } else if (m.material.albedoColor != null) {
                         specularMapShader.setColor3("albedoColor", m.material.albedoColor);
                         defines.push("#define ALBEDOCOLOR");
                     }
-
-                } else { // SpecularGlossiness Model
+                } else {
+                    // SpecularGlossiness Model
                     if (m.material.reflectivityTexture != null) {
                         specularMapShader.setTexture("specularGlossinessTexture", m.material.reflectivityTexture);
                         defines.push("#define SPECULARGLOSSINESSTEXTURE");
                         specularMapShader.setMatrix("specTextureMatrix", (m.material.reflectivityTexture as Texture).getTextureMatrix());
-
                     } else if (m.material.reflectivityColor != null) {
                         specularMapShader.setColor3("reflectivityColor", m.material.reflectivityColor);
                         defines.push("#define REFLECTIVITYCOLOR");
@@ -514,16 +526,14 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                         specularMapShader.setFloat("glossiness", m.material.microSurface);
                         defines.push("#define GLOSSINESSS");
                     }
-                }    
-            }
-            else if (m.material instanceof StandardMaterial) {
+                }
+            } else if (m.material instanceof StandardMaterial) {
                 // if StandardMaterial:
                 // if specularTexture not null : use it to compute reflectivity
                 if (m.material.specularTexture != null) {
                     specularMapShader.setTexture("reflectivityTexture", m.material.specularTexture);
                     defines.push("#define REFLECTIVITYTEXTURE");
                     specularMapShader.setMatrix("specTextureMatrix", (m.material.specularTexture as Texture).getTextureMatrix());
-
                 }
                 if (m.material.specularColor != null) {
                     specularMapShader.setColor3("reflectivityColor", m.material.specularColor);
@@ -531,13 +541,12 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 }
 
                 // else :
-                    // not possible ?
+                // not possible ?
             }
         }
         renderSpecularTarget.setMaterialForRendering(m, specularMapShader);
         renderSpecularTarget.renderList?.push(m);
     }
 }
-
 
 RegisterClass("BABYLON.ScreenSpaceReflection2PostProcess", ScreenSpaceReflection2PostProcess);

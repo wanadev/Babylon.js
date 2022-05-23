@@ -23,6 +23,7 @@ uniform int steps;
 uniform float thickness;
 uniform float strength;
 uniform float falloffExponent;
+uniform float distanceFade;
 
 uniform bool changeProperties;
 
@@ -58,6 +59,10 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
 // The intersection algorithm based on a David Lettier's tutorial uses 2D ray marching 
 ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 texSize){
     ReflectionInfo info;
+    info.visibilityBackup = 0.0;
+    info.visibility = 0.0;
+    info.coords = vUV;
+    info.miss = true;
 
     float tol = thickness;
     float resol = resolution;
@@ -81,25 +86,15 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
 
     #ifdef RIGHT_HANDED_SCENE
         if (endVS.z > minZ){ // no need to compute anything, the max depth of reflection is not in the view space (not behind the near plane)
-            info.coords = vUV;
-            info.miss = true;
-            info.visibility = 0.0;
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
                 info.visibilityBackup = 1.0;
-            #else
-                info.visibilityBackup = 0.0; 
             #endif
             return info;
         }
     #else 
         if (endVS.z < minZ){ // no need to compute anything, the max depth of reflection is not in the view space (not behind the near plane)
-            info.coords = vUV;
-            info.miss = true;
-            info.visibility = 0.0;
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
                 info.visibilityBackup = 1.0;
-            #else
-                info.visibilityBackup = 0.0; 
             #endif
             return info;
         }
@@ -179,13 +174,8 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
             hit0 = 1.0;
             break;
         } else if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0){ 
-            info.coords = vUV;
-            info.miss = true;
-            info.visibility = 0.0;
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
                 info.visibilityBackup = 1.0;
-            #else
-                info.visibilityBackup = 0.0; 
             #endif
             return info;
         } else {    
@@ -233,13 +223,8 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
             hit1 = 1.0;
             search1 = search0 + ((search1 - search0) / 2.0);
         } else if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0){ 
-            info.coords = vUV;
-            info.miss = true;
-            info.visibility = 0.0;
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
                 info.visibilityBackup = 1.0;
-            #else
-                info.visibilityBackup = 0.0; 
             #endif
             return info;
         } else {
@@ -269,8 +254,9 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
         }
         // tol = thickness + 0.0005 * pow(distance(hitCoordVS, vec3(0.0, 0.0, 0.0)), 1.5);
         info.visibility = texture2D(positionSampler, uv).w // alpha value of the reflected scene position 
-            * (1.0 - max ( dot(-normalize(hitCoordVS), dirVS), 0.0)) // to fade out the reflexion as the reflected direction point to the camera's position (hit behind the camera)
+            * (1.0 - max ( dot(-normalize(hitCoordVS), dirVS), 0.0)) // to fade out the reflection as the reflected direction point to the camera's position (hit behind the camera)
             * (1.0 - clamp ( length(mix(hitCoordVS, endVS.xyz, search1) - hitCoordVS)/(maxDistance), 0.0, 1.0)) // the reflection should be sharper when near from the starting point
+            * (1.0 - clamp (abs(hitCoordVS.z / distanceFade), 0.0, 1.0)) // to fade out the reflection near the distanceFade
             * (1.0 - clamp (depth/tol, 0.0, 1.0)); // since the hit point is not always precisely found, we fade out the reflected color if we aren't precise enough 
 
         #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
@@ -290,7 +276,7 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
 vec3 hash(vec3 a)
 {
     a = fract(a * 0.8);
-    a += dot(a, a.yxz + 19.19);
+    a += dot(a, a.yxz + 19.19);   
     return fract((a.xxy + a.yxx) * a.zyx);
 }
        
@@ -321,7 +307,6 @@ void main(void)
 
     // ********************* debug **********************
 
-
     #ifdef SSR_SUPPORTED
 
     vec4 originalFull = texture2D(textureSampler, vUV);
@@ -339,9 +324,50 @@ void main(void)
     // according to the pixel's position and normal.
     vec3 unitNormal = normalize((texture2D(normalSampler, vUV)).xyz);
     vec3 position = (view * texture2D(positionSampler, vUV)).xyz;
-    vec3 unitPosition = normalize(position);
 
+    vec3 unitPosition = normalize(position);
     vec3 reflected = normalize(reflect(unitPosition, unitNormal));
+
+    ReflectionInfo info;
+    vec3 jitt = mix(vec3(0.0), hash(position), 0.1 * roughness); // hash(position) represents a random vector3, jitt represents a bias to simulate roughness (light deviation)
+    #ifdef RIGHT_HANDED_SCENE
+        if (position.z < distanceFade || distanceFade == 0.0){ // no need to compute reflection, the point we are evaluation is further than the distanceFade
+            #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
+                info.coords = vUV;
+                info.visibility = 0.0;
+                info.miss = true;
+                info.visibilityBackup = 1.0;
+            #else
+                gl_FragColor = texture2D(textureSampler, vUV); // no reflection, we leave the main function
+                return;
+            #endif
+        } else {
+            vec2 texSize = gl_FragCoord.xy / vUV;
+            info = getReflectionInfo2DRayMarching(reflected + jitt, position, texSize);
+
+            float visibility = clamp(info.visibility, 0.0, 1.0);  
+            float visibilityBackup = clamp(info.visibilityBackup, 0.0, 1.0);
+        }
+    #else 
+        if (position.z > distanceFade || distanceFade == 0.0){ // no need to compute reflection, the point we are evaluation is further than the distanceFade
+            #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
+                info.coords = vUV;
+                info.visibility = 0.0;
+                info.miss = true;
+                info.visibilityBackup = 1.0;
+            #else
+                gl_FragColor = texture2D(textureSampler, vUV); // no reflection, we leave the main function
+                return;
+            #endif
+        } else {
+            vec2 texSize = gl_FragCoord.xy / vUV;
+            info = getReflectionInfo2DRayMarching(reflected + jitt, position, texSize);
+
+        }
+    #endif
+
+    float visibility = clamp(info.visibility, 0.0, 1.0);  
+    float visibilityBackup = clamp(info.visibilityBackup, 0.0, 1.0);
 
     // ********************* debug **********************
     // #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
@@ -355,21 +381,12 @@ void main(void)
     //     gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
     //     return;
     // #endif
-    // ********************* debug **********************
-    
-    vec2 texSize = gl_FragCoord.xy / vUV;
-
-    vec3 jitt = mix(vec3(0.0), hash(position), 0.1 * roughness); // hash(position) represents a random vector3, jitt represents a bias to simulate roughness (light deviation)
-    ReflectionInfo info = getReflectionInfo2DRayMarching(reflected + jitt, position, texSize);
-
-    float visibility = clamp(info.visibility, 0.0, 1.0);  
-    float visibilityBackup = clamp(info.visibilityBackup, 0.0, 1.0);
+    // ********************* debug **********************  
     
     // get the color of the reflection
     vec3 reflectedColor;
     
     #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
-        // vec3 jitt = mix(vec3(0.0), hash(position), 0.1 * roughness);
         // compute reflection in view space and then come back to world space
         vec3 coord = vec3( inverse(view) * vec4(reflected, 0.0));
 
@@ -402,7 +419,7 @@ void main(void)
     vec3 F0 = spec;
   
     vec3 reflectionCoeff = fresnelSchlick(max(dot(unitNormal, unitPosition), 0.0), F0)
-                            * vec3(pow(spec.x * strength, falloffExponent), pow(spec.y * strength, falloffExponent), pow(spec.z * strength, falloffExponent))
+                            * clamp(vec3(pow(spec.x * strength, falloffExponent), pow(spec.y * strength, falloffExponent), pow(spec.z * strength, falloffExponent)), 0.0, 1.0)
                             * clamp(screenEdgefactor * (visibility + visibilityBackup), 0.0, 0.9); 
 
     // // *********************** SHADING *******************************
@@ -431,6 +448,8 @@ void main(void)
     // to render the final color
     // (no refraction) and (AbsorbtionCoeff + RefractionCoeff + ReflectionCoeff = 1)  => AbsorbtionCoeff = 1 - ReflectionCoeff
     gl_FragColor = vec4((original * (vec3(1.0) - reflectionCoeff)) + (reflectedColor * reflectionCoeff), originalFull.a);
+
+    // gl_FragColor = vec4(reflectionCoeff, originalFull.a);
 
     #else 
         gl_FragColor = texture2D(textureSampler, vUV);
