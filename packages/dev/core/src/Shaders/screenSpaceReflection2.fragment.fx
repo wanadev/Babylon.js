@@ -6,16 +6,11 @@ uniform sampler2D textureSampler;
 #ifdef SSR_SUPPORTED
 uniform sampler2D normalSampler;
 uniform sampler2D positionSampler;
-uniform sampler2D specularMap;
+uniform sampler2D specularSampler;
 uniform sampler2D depthSampler;
-// uniform sampler2D metallicMap;
-// uniform sampler2D albedoSampler;
-// uniform vec3 cameraPos;
-
 #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
     uniform samplerCube backUpSampler;
 #endif
-
 // SSR parameters
 uniform float maxDistance;
 uniform float resolution;
@@ -24,23 +19,21 @@ uniform float thickness;
 uniform float strength;
 uniform float falloffExponent;
 uniform float distanceFade;
-
 uniform bool changeProperties;
-
 #endif // SSR_SUPPORTED
 
 uniform mat4 view;
 uniform mat4 projection;
 
 // camera properties
-uniform float minZ; // onlu used with depthRenderer
+uniform float minZ;
 uniform float maxZ;
+uniform vec3 cameraPos;
 
 // Varyings
 varying vec2 vUV;
 
 #ifdef SSR_SUPPORTED
-
 // Structs
 struct ReflectionInfo {
     float visibilityBackup;
@@ -49,16 +42,17 @@ struct ReflectionInfo {
     bool miss;
 };
 
-// Fresnel Schlicks formula according to wikipedia https://en.wikipedia.org/wiki/Schlick%27s_approximation 
+// Fresnel Schlicks formula according to https://learnopengl.com/PBR/Theory 
 vec3 fresnelSchlick(float cosTheta, vec3 F0)
 {
     return F0 + (vec3(1.0) - F0) * pow(1.0 - cosTheta, 5.0);
 }
 
-// Computes and returns the coordinates and the visibility of the reflected pixel if any, as well as a boolean defining if there is a reflected pixel or if it is a miss
+// Computes and returns the coordinates and the visibility of the reflected pixel if any, as well as a boolean defining if there is a reflected pixel or if it's a miss
 // The intersection algorithm based on a David Lettier's tutorial uses 2D ray marching 
 ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 texSize){
     ReflectionInfo info;
+    // Default values if the algorithm fail to find intersection:
     info.visibilityBackup = 0.0;
     info.visibility = 0.0;
     info.coords = vUV;
@@ -92,7 +86,7 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
             return info;
         }
     #else 
-        if (endVS.z < minZ){ // no need to compute anything, the max depth of reflection is not in the view space (not behind the near plane)
+        if (endVS.z < minZ){ 
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
                 info.visibilityBackup = 1.0;
             #endif
@@ -111,21 +105,20 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     endSS.xy   = endSS.xy * 0.5 + vec2(0.5);
     endSS.xy  *= texSize;
 
-    vec2 currFrag  = startSS.xy; // currFrag / texSize equivalent to vUV at this point
+    vec2 currFrag  = startSS.xy; // (currFrag / texSize) equivalent to vUV at this point
     vec2 uv = vUV;
 
     // compute delta difference between X and Y coordinates
-    // will be used to for ray marching in screen space 
     float deltaX = endSS.x - startSS.x;
     float deltaY = endSS.y - startSS.y;
 
     // useX = 1 if the X dimension is bigger than the Y one
     float useX = abs(deltaX) >= abs(deltaY) ? 1.0 : 0.0;
     
-    // delta : the biggest delta between deltaX and deltaY
+    // delta: the biggest delta between deltaX and deltaY
     float delta = mix(abs(deltaY), abs(deltaX), useX) * clamp(resol, 0.0, 1.0);
     
-    // increment : interpolation step according to each direction
+    // increment: interpolation step according to each direction
     vec2 increment = vec2(deltaX, deltaY) / max(delta, 0.001); // we skip some pixels if resolution less than 1.0
     
     // percentage of research, interpolation coefficient
@@ -144,8 +137,8 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     for (int i = 0; i < int(delta); i++) {
         // first pass
         // move from the startSS to endSS using linear interpolation
-        //currFragx = (startSS.x) * (1.0 - search1) + (endSS.x) * search1;
-        //currFragy = (startSS.y) * (1.0 - search1) + (endSS.y) * search1;
+        // currFragx = (startSS.x) * (1.0 - search1) + (endSS.x) * search1;
+        // currFragy = (startSS.y) * (1.0 - search1) + (endSS.y) * search1;
         currFrag += increment;
         uv.xy  = currFrag / texSize;
 
@@ -237,7 +230,7 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
        
     // compute how much the reflection is visible
     if (hit1 == 0.0){
-         #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
+        #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
             info.visibilityBackup = 1.0;
         #else
             info.visibilityBackup = 0.0; 
@@ -279,7 +272,8 @@ vec3 hash(vec3 a)
     a += dot(a, a.yxz + 19.19);   
     return fract((a.xxy + a.yxx) * a.zyx);
 }
-       
+#endif // SSR_SUPPORTED
+
 void main(void)
 {
 
@@ -311,14 +305,14 @@ void main(void)
 
     vec4 originalFull = texture2D(textureSampler, vUV);
     vec3 original = originalFull.rgb;
-    vec3 spec = texture2D(specularMap, vUV).rgb;
+    vec3 spec = texture2D(specularSampler, vUV).rgb;
 
     if (dot(spec, vec3(1.0)) <= 0.0){
         gl_FragColor = texture2D(textureSampler, vUV); // no reflectivity, no need to compute reflection
         return;
     }
 
-    float roughness = 1.0 - texture2D(specularMap, vUV).a;
+    float roughness = 1.0 - texture2D(specularSampler, vUV).a;
 
     // Get coordinates of the direction of the reflected ray
     // according to the pixel's position and normal.
@@ -331,7 +325,7 @@ void main(void)
     ReflectionInfo info;
     vec3 jitt = mix(vec3(0.0), hash(position), 0.1 * roughness); // hash(position) represents a random vector3, jitt represents a bias to simulate roughness (light deviation)
     #ifdef RIGHT_HANDED_SCENE
-        if (position.z < distanceFade || distanceFade == 0.0){ // no need to compute reflection, the point we are evaluation is further than the distanceFade
+        if (position.z < distanceFade || distanceFade == 0.0){ // no need to compute reflection, the point we are evaluating is further than the distanceFade
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
                 info.coords = vUV;
                 info.visibility = 0.0;
@@ -418,7 +412,7 @@ void main(void)
     // "The specular map contains F0 for dielectrics and the reflectance value for raw metal" https://substance3d.adobe.com/tutorials/courses/the-pbr-guide-part-2 
     vec3 F0 = spec;
   
-    vec3 reflectionCoeff = fresnelSchlick(max(dot(unitNormal, unitPosition), 0.0), F0)
+    vec3 reflectionCoeff = fresnelSchlick(max(dot(unitNormal, -unitPosition), 0.0), F0) // https://lettier.github.io/3d-game-shaders-for-beginners/fresnel-factor.html
                             * clamp(vec3(pow(spec.x * strength, falloffExponent), pow(spec.y * strength, falloffExponent), pow(spec.z * strength, falloffExponent)), 0.0, 1.0)
                             * clamp(screenEdgefactor * (visibility + visibilityBackup), 0.0, 0.9); 
 
@@ -451,9 +445,9 @@ void main(void)
 
     // gl_FragColor = vec4(reflectionCoeff, originalFull.a);
 
-    #else 
-        gl_FragColor = texture2D(textureSampler, vUV);
-    #endif
+    #else // SSR_SUPPORTED
+    gl_FragColor = texture2D(textureSampler, vUV);
+    #endif // SSR_SUPPORTED
 
     // // ************* input texture rendering ****************
 
