@@ -175,7 +175,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
 
         // PrePass
         this._forceGeometryBuffer = forceGeometryBuffer;
-        this._forceGeometryBuffer = true; //forceGeometryBuffer; // TODO remove when problem solved
+        this._forceGeometryBuffer = false; //forceGeometryBuffer; // TODO remove when problem solved
         if (this._forceGeometryBuffer) {
             // Get geometry buffer renderer and update effect
             const geometryBufferRenderer = scene.enableGeometryBufferRenderer();

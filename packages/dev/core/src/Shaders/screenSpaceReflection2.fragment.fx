@@ -20,6 +20,7 @@ uniform float strength;
 uniform float falloffExponent;
 uniform float distanceFade;
 uniform bool changeProperties;
+#include<helperFunctions>
 #endif // SSR_SUPPORTED
 
 uniform mat4 view;
@@ -32,6 +33,7 @@ uniform vec3 cameraPos;
 
 // Varyings
 varying vec2 vUV;
+
 
 #ifdef SSR_SUPPORTED
 // Structs
@@ -97,7 +99,7 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     // Calculate the start and end point of the reflection ray in screen space.
     vec4 startSS = projection * startVS; // Project to screen space.
     startSS.xyz /= startSS.w; // Perform the perspective divide.
-    startSS.xy= startSS.xy * 0.5 + vec2(0.5); // Convert the screen-space XY coordinates to UV coordinates.
+    startSS.xy= startSS.xy * 0.5 + vec2(0.5); // Convert from clip space to texture space.
     startSS.xy *= texSize; // Convert the UV coordinates to fragment/pixel coordinates.
 
     vec4 endSS = projection * endVS;
@@ -162,20 +164,19 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
             depth *= -1.0;
         #endif
 
-        if (depth > 0.0 && depth < tol) {
-            // intersection
-            hit0 = 1.0;
-            break;
-        } else if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0){ 
+        hit0 = (depth > 0.0 && depth < tol) ? 1.0 : 0.0;
+
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0){ 
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
                 info.visibilityBackup = 1.0;
             #endif
             return info;
-        } else {    
-            // no intersection, we continue
-            // search0 save the position of the last known miss
-            search0 = search1;
-        }
+        } 
+        
+        if (hit0 == 1.0) break;
+        // no intersection, we continue
+        // search0 save the position of the last known miss
+        search0 = search1;
 
     }    
     // save search1 as the halfway between the position of the last miss and the position of the last hit 
@@ -272,6 +273,35 @@ vec3 hash(vec3 a)
     a += dot(a, a.yxz + 19.19);   
     return fract((a.xxy + a.yxx) * a.zyx);
 }
+
+// Based on the implementation by David Hoskins at https://www.shadertoy.com/view/4djSRW
+// MIT License for these hash functions:
+/* Copyright (c)2014 David Hoskins.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+vec3 hash33(vec3 p3) // 3D input, 3D output
+{
+	p3 = fract(p3 * vec3(.1031, .1030, .0973));
+    p3 += dot(p3, p3.yxz + 33.33);
+    return fract((p3.xxy + p3.yxx) * p3.zyx);
+}
+
 #endif // SSR_SUPPORTED
 
 void main(void)
@@ -303,9 +333,11 @@ void main(void)
 
     #ifdef SSR_SUPPORTED
 
+    // *************** Get data from samplers ***************
+
     vec4 originalFull = texture2D(textureSampler, vUV);
     vec3 original = originalFull.rgb;
-    vec3 spec = texture2D(specularSampler, vUV).rgb;
+    vec3 spec = toLinearSpace(texture2D(specularSampler, vUV).rgb);
 
     if (dot(spec, vec3(1.0)) <= 0.0){
         gl_FragColor = texture2D(textureSampler, vUV); // no reflectivity, no need to compute reflection
@@ -320,10 +352,20 @@ void main(void)
     vec3 position = (view * texture2D(positionSampler, vUV)).xyz;
 
     vec3 unitPosition = normalize(position);
-    vec3 reflected = normalize(reflect(unitPosition, unitNormal));
+    vec3 reflected = normalize(reflect(unitPosition, unitNormal)); // incident direction = unit position in camera space
+
+    // *************** Compute reflection info  ***************
 
     ReflectionInfo info;
-    vec3 jitt = mix(vec3(0.0), hash(position), 0.1 * roughness); // hash(position) represents a random vector3, jitt represents a bias to simulate roughness (light deviation)
+    // vec3 jitt = (hash33(position.xyz * 10.0) - vec3(0.5, 0.5, 0.5)) * roughness;
+    vec3 jitt = mix(vec3(0.0), hash(texture2D(positionSampler, vUV).xyz), roughness * roughness) * 0.5; // hash(position) represents a random vector3, jitt represents a bias to simulate roughness (light deviation)
+    
+    // gl_FragColor.xyz = hash33(texture2D(positionSampler, vUV).xyz);
+    // gl_FragColor.xyz = hash(texture2D(positionSampler, vUV).xyz);
+    // gl_FragColor.xyz = hash(position);
+    // gl_FragColor.a = 1.0;
+    // return;
+    
     #ifdef RIGHT_HANDED_SCENE
         if (position.z < distanceFade || distanceFade == 0.0){ // no need to compute reflection, the point we are evaluating is further than the distanceFade
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
@@ -342,8 +384,8 @@ void main(void)
             float visibility = clamp(info.visibility, 0.0, 1.0);  
             float visibilityBackup = clamp(info.visibilityBackup, 0.0, 1.0);
         }
-    #else 
-        if (position.z > distanceFade || distanceFade == 0.0){ // no need to compute reflection, the point we are evaluation is further than the distanceFade
+    #else // if left handed scene
+        if (position.z > distanceFade || distanceFade == 0.0){ // no need to compute reflection, the point we are evaluating is further than the distanceFade
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
                 info.coords = vUV;
                 info.visibility = 0.0;
@@ -362,6 +404,9 @@ void main(void)
 
     float visibility = clamp(info.visibility, 0.0, 1.0);  
     float visibilityBackup = clamp(info.visibilityBackup, 0.0, 1.0);
+
+    // *************** Apply reflection ***************
+
 
     // ********************* debug **********************
     // #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
@@ -439,7 +484,7 @@ void main(void)
 
     // ********************* debug **********************
 
-    // to render the final color
+    // Render the final color
     // (no refraction) and (AbsorbtionCoeff + RefractionCoeff + ReflectionCoeff = 1)  => AbsorbtionCoeff = 1 - ReflectionCoeff
     gl_FragColor = vec4((original * (vec3(1.0) - reflectionCoeff)) + (reflectedColor * reflectionCoeff), originalFull.a);
 
