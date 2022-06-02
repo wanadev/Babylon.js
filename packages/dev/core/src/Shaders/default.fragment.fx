@@ -310,7 +310,7 @@ vec4 reflectionColor = vec4(0., 0., 0., 1.);
 
 #endif
 
-#ifdef VERTEXALPHA
+#if defined(VERTEXALPHA) || defined(INSTANCESCOLOR)
 	alpha *= vColor.a;
 #endif
 
@@ -453,14 +453,14 @@ color.rgb = max(color.rgb, 0.);
     #ifdef PREPASS_REFLECTIVITY
 		#if defined(SPECULARTERM)
 			#if defined(SPECULAR)
-				gl_FragData[PREPASS_REFLECTIVITY_INDEX] = vec4((specularMapColor.rgba)) * writeGeometryInfo; // no specularity if no visibility
+				gl_FragData[PREPASS_REFLECTIVITY_INDEX] = vec4(specularMapColor) * writeGeometryInfo; // no specularity if no visibility
 			#else
-				gl_FragData[PREPASS_REFLECTIVITY_INDEX] = vec4((specularColor), 1.0) * writeGeometryInfo;
+				gl_FragData[PREPASS_REFLECTIVITY_INDEX] = vec4(specularColor, 1.0) * writeGeometryInfo;
 			#endif
 		#else
 			gl_FragData[PREPASS_REFLECTIVITY_INDEX] = vec4(0.0, 0.0, 0.0, 1.0) * writeGeometryInfo;
-		#endif	
-	#endif
+		#endif
+    #endif
 #endif
 
 #if !defined(PREPASS) || defined(WEBGL2)
