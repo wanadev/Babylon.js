@@ -1,5 +1,6 @@
 import { Nullable } from "../types";
 import { Camera } from "../Cameras/camera";
+import type { Effect } from "../Materials/effect";
 import { PostProcess, PostProcessOptions } from "./postProcess";
 import { Constants } from "../Engines/constants";
 import { GeometryBufferRenderer } from "../Rendering/geometryBufferRenderer";
@@ -50,7 +51,12 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
      * Gets or sets the falloff exponent used while computing fresnel. More the exponent is high, more the reflections will be discrete.
      */
     @serialize()
-    public falloffExponent: number = 0.0;
+    public reflectionSpecularFalloffExponent: number = 0.0;
+    /**
+     * Gets or sets the factor applied when computing roughness. Default value is 1.0.
+     */
+    @serialize()
+    public roughnessFactor: number = 1.0;
     /**
      * Gets or sets the distance at whitch the SSR algorithme no longer applies.
      */
@@ -133,8 +139,8 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
      * @param scene The scene containing the objects to calculate reflections.
      * @param options The required width/height ratio to downsize to before computing the render pass.
      * @param camera The camera to apply the render pass to.
-     * @param engine The engine which the post process will be applied. (default: current engine)
      * @param samplingMode The sampling mode to be used when computing the pass. (default: 0)
+     * @param engine The engine which the post process will be applied. (default: current engine)
      * @param reusable If the post process can be reused on the same frame. (default: false)
      * @param textureType Type of textures used when performing the post process. (default: 0)
      * @param blockCompilation If compilation of the shader should not be done in the constructor. The updateEffect method can be used to compile the shader at a later time. (default: true)
@@ -145,8 +151,8 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         scene: Scene,
         options: number | PostProcessOptions,
         camera: Nullable<Camera>,
-        engine: Engine,
         samplingMode?: number,
+        engine?: Engine,
         reusable?: boolean,
         textureType: number = Constants.TEXTURETYPE_UNSIGNED_INT,
         blockCompilation = true,
@@ -155,8 +161,11 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         super(
             name,
             "screenSpaceReflection2",
-            ["projection", "view", "maxDistance", "resolution", "steps", "thickness", "strength", "falloffExponent", "distanceFade", "minZ", "maxZ", "cameraPos", "changeProperties"],
-            ["textureSampler", "normalSampler", "depthSampler", "positionSampler", "specularSampler", "cameraPos", "backUpSampler", "albedoSampler"],
+            ["projection", "view", "maxDistance", "resolution", "steps", "thickness", 
+            "strength", "falloffExponent", "distanceFade", "minZ", "maxZ", "cameraPos", 
+            "roughnessFactor", "cubeTexHeight", "cubeTexWidth"],
+            ["textureSampler", "normalSampler", "depthSampler", "positionSampler", 
+            "specularSampler", "cameraPos", "backUpSampler", "albedoSampler"],
             options,
             camera,
             samplingMode,
@@ -172,6 +181,9 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         if (!camera) {
             return;
         }
+
+        // this.inputTexture?.texture.useMipMaps = true;
+
 
         // PrePass
         this._forceGeometryBuffer = forceGeometryBuffer;
@@ -195,7 +207,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         this._updateEffectDefines();
 
         // On apply, send uniforms
-        this.onApply = (effect) => {
+        this.onApply = (effect: Effect) => {
             if (!this._prePassRenderer && !this._geometryBufferRenderer) {
                 return;
             }
@@ -221,8 +233,12 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             }
             if (this._backUpTextureSkybox) {
                 effect.setTexture("backUpSampler", this._backUpTextureSkybox);
+                // effect.setFloat("cubeTexHeight", this._backUpTextureSkybox.getBaseSize().height); 
+                // effect.setFloat("cubeTexWidth", this._backUpTextureSkybox.getBaseSize().width);
             } else if (this._backUpTextureProbe) {
                 effect.setTexture("backUpSampler", this._backUpTextureProbe);
+                // effect.setFloat("cubeTexHeight", this._backUpTextureProbe.getBaseSize().height); 
+                // effect.setFloat("cubeTexWidth", this._backUpTextureProbe.getBaseSize().width);
             }
 
             const viewMatrix = camera.getViewMatrix(true);
@@ -237,10 +253,9 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             effect.setInt("steps", this.steps);
             effect.setFloat("thickness", this.thickness);
             effect.setFloat("strength", this.strength);
-            effect.setFloat("falloffExponent", this.falloffExponent);
+            effect.setFloat("falloffExponent", this.reflectionSpecularFalloffExponent);
+            effect.setFloat("roughnessFactor", this.roughnessFactor);
             effect.setFloat("distanceFade", this.distanceFade);
-
-            effect.setBool("changeProperties", this.changeProperties);
 
             effect.setFloat("minZ", camera.minZ);
             effect.setFloat("maxZ", camera.maxZ);
@@ -286,8 +301,8 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                     scene,
                     parsedPostProcess.options,
                     targetCamera,
-                    scene.getEngine(),
                     parsedPostProcess.renderTargetSamplingMode,
+                    scene.getEngine(),
                     parsedPostProcess.textureType,
                     parsedPostProcess.reusable
                 );

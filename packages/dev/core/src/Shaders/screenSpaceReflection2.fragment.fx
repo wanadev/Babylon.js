@@ -18,8 +18,8 @@ uniform int steps;
 uniform float thickness;
 uniform float strength;
 uniform float falloffExponent;
+uniform float roughnessFactor;
 uniform float distanceFade;
-uniform bool changeProperties;
 #include<helperFunctions>
 #endif // SSR_SUPPORTED
 
@@ -53,6 +53,7 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
 // Computes and returns the coordinates and the visibility of the reflected pixel if any, as well as a boolean defining if there is a reflected pixel or if it's a miss
 // The intersection algorithm based on a David Lettier's tutorial uses 2D ray marching 
 ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 texSize){
+
     ReflectionInfo info;
     // Default values if the algorithm fail to find intersection:
     info.visibilityBackup = 0.0;
@@ -60,25 +61,11 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     info.coords = vUV;
     info.miss = true;
 
-    float tol = thickness;
-    float resol = resolution;
-    int step = steps;
-
-    if (changeProperties){
-        // the tolerance and resolution increase as the hitCoord is far from the camera pos
-        float tmp = clamp(hitCoordVS.z, 5.0, 30.0);
-        float x =  tmp;
-        float xSquared = x * tmp;
-        float xCube = xSquared * tmp;
-        // some black magic (TODO : try to explain how we get this parameters)
-        tol = clamp(-0.00016 * xCube + 0.0082 * xSquared - 0.07 * x + 0.2, 0.05, 1.5);
-        resol = clamp(0.03 * x + 0.15, 0.2, 1.0);
-        step = int(0.003* xSquared + 0.08 * x + 4.2);
-    }
-
     // Calculate the start and end point of the reflection ray in view space.
     vec4 startVS = vec4(hitCoordVS, 1.0);
-    vec4 endVS   = vec4(hitCoordVS + (dirVS * maxDistance), 1.0);
+    // startVS.z -= thickness;
+    vec4 endVS = vec4(hitCoordVS + (dirVS * maxDistance), 1.0);
+    // endVS.z -= thickness;
 
     #ifdef RIGHT_HANDED_SCENE
         if (endVS.z > minZ){ // no need to compute anything, the max depth of reflection is not in the view space (not behind the near plane)
@@ -99,13 +86,13 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     // Calculate the start and end point of the reflection ray in screen space.
     vec4 startSS = projection * startVS; // Project to screen space.
     startSS.xyz /= startSS.w; // Perform the perspective divide.
-    startSS.xy= startSS.xy * 0.5 + vec2(0.5); // Convert from clip space to texture space.
+    startSS.xy = startSS.xy * 0.5 + vec2(0.5); // Convert from clip space to texture space.
     startSS.xy *= texSize; // Convert the UV coordinates to fragment/pixel coordinates.
 
     vec4 endSS = projection * endVS;
     endSS.xyz /= endSS.w;
-    endSS.xy   = endSS.xy * 0.5 + vec2(0.5);
-    endSS.xy  *= texSize;
+    endSS.xy = endSS.xy * 0.5 + vec2(0.5);
+    endSS.xy *= texSize;
 
     vec2 currFrag  = startSS.xy; // (currFrag / texSize) equivalent to vUV at this point
     vec2 uv = vUV;
@@ -118,11 +105,11 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     float useX = abs(deltaX) >= abs(deltaY) ? 1.0 : 0.0;
     
     // delta: the biggest delta between deltaX and deltaY
-    float delta = mix(abs(deltaY), abs(deltaX), useX) * clamp(resol, 0.0, 1.0);
+    float delta = mix(abs(deltaY), abs(deltaX), useX) * clamp(resolution, 0.0, 1.0);
     
     // increment: interpolation step according to each direction
-    vec2 increment = vec2(deltaX, deltaY) / max(delta, 0.001); // we skip some pixels if resolution less than 1.0
-    
+    vec2 increment = vec2(deltaX, deltaY) / max(delta, 0.01); // we skip some pixels if resolution less than 1.0
+
     // percentage of research, interpolation coefficient
     float search0 = 0.0;
     float search1 = 0.0;
@@ -134,6 +121,13 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     float viewDistance = startVS.z; // depth of the start point in view space
     float depth; 
     float depthAtCurrPosVS; 
+
+    // // As explained in https://lup.lub.lu.se/luur/download?func=downloadFile&recordOId=8890761&fileOId=8890762 (p.16)
+    // // we should use variable thickness, depending on the distance between two adjacent pixels in view space
+    vec3 VSPos = hitCoordVS;
+    vec3 oldVSPos = VSPos;
+    float accurTol;    
+    float tol = thickness;
 
     // looking for intersection position
     for (int i = 0; i < int(delta); i++) {
@@ -154,9 +148,13 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
         // perspective-correct interpolation
         viewDistance = (startVS.z * endVS.z) / mix(endVS.z, startVS.z, search1);
 
-        if (changeProperties){ // TODO change
-            tol += 0.002;
-        }
+        // scale thickness 
+        VSPos = (view * texture2D(positionSampler, (currFrag)/texSize)).xyz;
+        accurTol = thickness * distance(VSPos, oldVSPos)/ distance(currFrag, currFrag - increment) * 0.5; // filters artifacts (avoid false positive intersection)
+        // accurTol = thickness * 0.1;
+        tol = thickness;
+        // tol = max(thickness * distance(VSPos, oldVSPos) * viewDistance * 0.1, thickness);
+        oldVSPos = VSPos;
 
         // difference between the perspective-correct interpolation and the current depth of the scene
         depth = viewDistance - depthAtCurrPosVS;
@@ -164,8 +162,14 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
             depth *= -1.0;
         #endif
 
-        hit0 = (depth > 0.0 && depth < tol) ? 1.0 : 0.0;
-
+        if (depth > 0.0 && depth > accurTol && depth < tol) {
+        //  if (depth > 0.0 && depth < thickness) {
+        // if(depth > 0.0 && depth < accurTol){    
+            hit0 = 1.0;
+        } else {
+            hit0 = 0.0;
+        }
+        
         if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0){ 
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
                 info.visibilityBackup = 1.0;
@@ -190,13 +194,11 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
         info.visibility = 0.0;
         #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
             info.visibilityBackup = 1.0;
-        #else
-            info.visibilityBackup = 0.0; 
         #endif
         return info;
     }
     
-    for (int i = 0; i < step; i++) { 
+    for (int i = 0; i < steps; i++) { 
         // second pass
         // the aim is to search more precisely where is the intersection point
         // in fact we could have miss a fragment during the first pass
@@ -213,7 +215,9 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
             depth *= -1.0;
         #endif
 
-        if (depth > 0.0 && depth < tol) {
+        if (depth > 0.0 && depth < thickness && depth > accurTol) {
+        // if (depth > 0.0 && depth < thickness) {
+        // if (depth > 0.0 && depth < accurTol){    
             hit1 = 1.0;
             search1 = search0 + ((search1 - search0) / 2.0);
         } else if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0){ 
@@ -240,24 +244,33 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
         info.miss = true;
     } else {
         info.miss = false;
-        if (dot(dirVS, normalize(texture2D(normalSampler, uv).xyz)) > 0.0){ // no reflection when hit backface of a mesh
+        if (dot(dirVS, normalize(texture2D(normalSampler, uv).xyz)) > 0.085 && search1 > 0.05){ // no reflection when hit backface of a mesh
+            // sreach1 test to avoid false negative exclusion of ray caused by backface rejection
             info.visibilityBackup = 0.0;
             info.visibility = 0.0;
             info.coords = uv;
             return info;
         }
         // tol = thickness + 0.0005 * pow(distance(hitCoordVS, vec3(0.0, 0.0, 0.0)), 1.5);
-        info.visibility = texture2D(positionSampler, uv).w // alpha value of the reflected scene position 
-            * (1.0 - max ( dot(-normalize(hitCoordVS), dirVS), 0.0)) // to fade out the reflection as the reflected direction point to the camera's position (hit behind the camera)
-            * (1.0 - clamp ( length(mix(hitCoordVS, endVS.xyz, search1) - hitCoordVS)/(maxDistance), 0.0, 1.0)) // the reflection should be sharper when near from the starting point
-            * (1.0 - clamp (abs(hitCoordVS.z / distanceFade), 0.0, 1.0)) // to fade out the reflection near the distanceFade
-            * (1.0 - clamp (depth/tol, 0.0, 1.0)); // since the hit point is not always precisely found, we fade out the reflected color if we aren't precise enough 
+
+        if (length(mix(hitCoordVS, endVS.xyz, search1) - hitCoordVS) < thickness){
+            info.visibility = 0.0; // avoid displaying reflection when search level is low (auto intersection)
+        } else {
+            info.visibility = texture2D(positionSampler, uv).w // alpha value of the reflected scene position 
+                * (1.0 - max ( dot(-normalize(hitCoordVS), dirVS), 0.0)) // to fade out the reflection as the reflected direction point to the camera's position (hit behind the camera)
+                // * (1.0 - clamp ( length(mix(hitCoordVS, endVS.xyz, search1) - hitCoordVS)/(maxDistance), 0.0, 1.0)) // the reflection should be sharper when near from the starting point
+                * (1.0 - search1) // the reflection should be sharper when near from the starting point
+                * (1.0 - clamp (abs(hitCoordVS.z / distanceFade), 0.0, 1.0)) // to fade out the reflection near the distanceFade
+                * (1.0 - clamp (depth/thickness, 0.0, 1.0)); // since the hit point is not always precisely found, we fade out the reflected color if we aren't precise enough 
+        }
 
         #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
             info.visibilityBackup = 1.0 - info.visibility; // complementary reflectivityColor
         #else
             info.visibilityBackup = 0.0; 
         #endif
+
+        // info.visibility *= (1.0 - clamp (depth/thickness, 0.0, 1.0));
     }
 
     info.coords = uv;
@@ -271,35 +284,7 @@ vec3 hash(vec3 a)
 {
     a = fract(a * 0.8);
     a += dot(a, a.yxz + 19.19);   
-    return fract((a.xxy + a.yxx) * a.zyx);
-}
-
-// Based on the implementation by David Hoskins at https://www.shadertoy.com/view/4djSRW
-// MIT License for these hash functions:
-/* Copyright (c)2014 David Hoskins.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.*/
-vec3 hash33(vec3 p3) // 3D input, 3D output
-{
-	p3 = fract(p3 * vec3(.1031, .1030, .0973));
-    p3 += dot(p3, p3.yxz + 33.33);
-    return fract((p3.xxy + p3.yxx) * p3.zyx);
+    return fract((a.xxy + a.yxx) * a.zyx) * 0.2; // * 0.2 to set 1.0 default roughness
 }
 
 #endif // SSR_SUPPORTED
@@ -355,19 +340,12 @@ void main(void)
     vec3 reflected = normalize(reflect(unitPosition, unitNormal)); // incident direction = unit position in camera space
 
     // *************** Compute reflection info  ***************
-
     ReflectionInfo info;
-    // vec3 jitt = (hash33(position.xyz * 10.0) - vec3(0.5, 0.5, 0.5)) * roughness;
-    vec3 jitt = mix(vec3(0.0), hash(texture2D(positionSampler, vUV).xyz), roughness * roughness) * 0.5; // hash(position) represents a random vector3, jitt represents a bias to simulate roughness (light deviation)
-    
-    // gl_FragColor.xyz = hash33(texture2D(positionSampler, vUV).xyz);
-    // gl_FragColor.xyz = hash(texture2D(positionSampler, vUV).xyz);
-    // gl_FragColor.xyz = hash(position);
-    // gl_FragColor.a = 1.0;
-    // return;
+
+    vec3 jitt = mix(vec3(0.0), hash(texture2D(positionSampler, vUV).xyz), roughness) * roughnessFactor; // hash(position) represents a random vector3, jitt represents a bias to simulate roughness (light deviation)
     
     #ifdef RIGHT_HANDED_SCENE
-        if (position.z < distanceFade || distanceFade == 0.0){ // no need to compute reflection, the point we are evaluating is further than the distanceFade
+        if (position.z < -distanceFade || distanceFade == 0.0){ // no need to compute reflection, the point we are evaluating is further than the distanceFade
             #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
                 info.coords = vUV;
                 info.visibility = 0.0;
@@ -407,6 +385,14 @@ void main(void)
 
     // *************** Apply reflection ***************
 
+    // if (dot(reflected, unitNormal) < 0.01){
+    //     info.coords = vUV;
+    //     info.visibility = 0.0;
+    //     info.miss = true;
+    //     #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
+    //         info.visibilityBackup = 1.0;
+    //     #endif    
+    // }
 
     // ********************* debug **********************
     // #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
@@ -450,9 +436,11 @@ void main(void)
         }
     #endif 
     
-    vec2 dCoords = smoothstep(vec2(0.2), vec2(0.6), clamp(abs(vec2(0.5, 0.5) - info.coords.xy), vec2(0.0), vec2(1.0))); // HermiteInterpolation
+
+    // Screen border mask
+    vec2 dCoords = smoothstep(vec2(0.2), vec2(0.6), clamp(abs(vec2(0.5, 0.5) - vUV), vec2(0.0), vec2(1.0))); // HermiteInterpolation
     float screenEdgefactor = clamp(1.0 - (dCoords.x + dCoords.y), 0.0, 1.0);
-    
+    // float screenEdgefactor = 1.0;
     // Fresnel
     // "The specular map contains F0 for dielectrics and the reflectance value for raw metal" https://substance3d.adobe.com/tutorials/courses/the-pbr-guide-part-2 
     vec3 F0 = spec;
@@ -460,6 +448,8 @@ void main(void)
     vec3 reflectionCoeff = fresnelSchlick(max(dot(unitNormal, -unitPosition), 0.0), F0) // https://lettier.github.io/3d-game-shaders-for-beginners/fresnel-factor.html
                             * clamp(vec3(pow(spec.x * strength, falloffExponent), pow(spec.y * strength, falloffExponent), pow(spec.z * strength, falloffExponent)), 0.0, 1.0)
                             * clamp(screenEdgefactor * (visibility + visibilityBackup), 0.0, 0.9); 
+    // gl_FragColor =  vec4(reflectionCoeff, 1.0);
+    // return;
 
     // // *********************** SHADING *******************************
 
