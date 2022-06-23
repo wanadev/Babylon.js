@@ -2,8 +2,9 @@
 // https://lettier.github.io/3d-game-shaders-for-beginners/screen-space-reflection.html
 precision highp float;
 uniform sampler2D textureSampler;
+uniform sampler2D originalColor;
+uniform sampler2D reflectedSampler;
 
-#ifdef SSR_SUPPORTED
 uniform sampler2D normalSampler;
 uniform sampler2D positionSampler;
 uniform sampler2D specularSampler;
@@ -16,13 +17,13 @@ uniform float maxDistance;
 uniform float resolution;
 uniform int steps;
 uniform float thickness;
+uniform vec2 direction;
 uniform float strength;
 uniform float falloffExponent;
 uniform float roughnessFactor;
 uniform float distanceFade;
 uniform bool backupOnlyWhenTooSpecular;
 #include<helperFunctions>
-#endif // SSR_SUPPORTED
 
 uniform mat4 view;
 uniform mat4 projection;
@@ -36,7 +37,8 @@ uniform vec3 cameraPos;
 varying vec2 vUV;
 
 
-#ifdef SSR_SUPPORTED
+#ifdef SSR_PASS
+
 // Structs
 struct ReflectionInfo {
     float visibilityBackup;
@@ -44,12 +46,6 @@ struct ReflectionInfo {
     vec2 coords;
     bool miss;
 };
-
-// Fresnel Schlicks formula according to https://learnopengl.com/PBR/Theory 
-vec3 fresnelSchlick(float cosTheta, vec3 F0)
-{
-    return F0 + (vec3(1.0) - F0) * pow(1.0 - cosTheta, 5.0);
-}
 
 // Computes and returns the coordinates and the visibility of the reflected pixel if any, as well as a boolean defining if there is a reflected pixel or if it's a miss
 // The intersection algorithm based on a David Lettier's tutorial uses 2D ray marching 
@@ -93,7 +89,7 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     endSS.xy = endSS.xy * 0.5 + vec2(0.5);
     endSS.xy *= texSize;
 
-    vec2 currFrag = startSS.xy; // (currFrag / texSize) equivalent to vUV at this point
+    vec2 currFrag  = startSS.xy; // (currFrag / texSize) equivalent to vUV at this point
     vec2 uv = vUV;
 
     // compute delta difference between X and Y coordinates
@@ -123,7 +119,7 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
 
 
     // We should use variable thickness, depending on the distance between two adjacent pixels in view space
-    float offset; // use to compute maxTol offset. Then acts as filter (2 jobs, 1 variable)
+    float offset; // use to compute maxTol offset
     float maxTol = thickness; // will be increased depending on distance between two adjacent pixels in view space
 
     // start of the first pass: looking for intersection position
@@ -230,27 +226,26 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
         info.miss = true;
     } else {
         info.miss = false;
+        // useful ?
+        if (dot(dirVS, texture2D(normalSampler, uv).xyz) > 0.085 && search1 > 0.01){ // no reflection when hit backface of a mesh
+            // sreach1 test to avoid false negative exclusion of ray caused by backface rejection
+            info.visibilityBackup = 0.0;
+            info.visibility = 0.0;
+            info.coords = uv;
+            return info;
+        }
 
-        // // // need feedback about this part :
-        // if (dot(dirVS, texture2D(normalSampler, uv).xyz) > 0.085 && search1 > 0.01){ // no reflection when hit backface of a mesh
-        //     // search1 test to avoid false negative exclusion of ray caused by backface rejection
-        //     info.visibilityBackup = 0.0;
-        //     info.visibility = 0.0;
-        //     info.coords = uv;
-        //     return info;
-        // }
-
-        if (length(mix(hitCoordVS, endVS.xyz, search1) - hitCoordVS) < thickness * 0.1){
+        if (length(mix(hitCoordVS, endVS.xyz, search1) - hitCoordVS) < thickness * 0.01){
             info.visibility = 0.0; // avoid displaying reflection when search level is low (auto intersection)
         } else {
-            vec2 dCoordScreen = smoothstep(vec2(0.2), vec2(0.6), abs(vec2(0.5, 0.5) - uv)); // HermiteInterpolation
+            vec2 dCoordScreen = smoothstep(vec2(0.2), vec2(0.6), clamp(abs(vec2(0.5, 0.5) - uv), vec2(0.0), vec2(1.0))); // HermiteInterpolation
 
-            info.visibility = texture2D(positionSampler, uv).a // alpha value of the reflected scene position 
+            info.visibility = texture2D(positionSampler, uv).w // alpha value of the reflected scene position 
                 * (1.0 - max ( dot(-normalize(hitCoordVS), dirVS), 0.0)) // to fade out the reflection as the reflected direction point to the camera's position (hit behind the camera)
                 * (1.0 - search1) // the reflection should be sharper when near from the starting point
                 * (1.0 - clamp (abs(hitCoordVS.z / distanceFade), 0.0, 1.0)) // to fade out the reflection near the distanceFade
                 * clamp(dot(-dirVS, texture2D(normalSampler, uv).xyz), 0.0, 1.0) // no reflection when hit backface of a mesh
-                * (1.0 - (dCoordScreen.x + dCoordScreen.y)) // to fade out the reflection near the edge of the screen
+                * clamp(1.0 - (dCoordScreen.x + dCoordScreen.y), 0.0, 1.0) // to fade out the reflection near the edge of the screen
                 * (1.0 - clamp (depth/maxTol, 0.0, 1.0)); // since the hit point is not always precisely found, we fade out the reflected color if we aren't precise enough 
         }
 
@@ -266,7 +261,7 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     return info;
 }
 
-// Hash function from the previous screenSpaceReflection.fragment.fx 
+// Hash function from screenSpaceReflection.fragment.fx 
 // Return a random vec3 
 vec3 hash(vec3 a)
 {
@@ -275,19 +270,14 @@ vec3 hash(vec3 a)
     return fract((a.xxy + a.yxx) * a.zyx); 
 }
 
-#endif // SSR_SUPPORTED
-
 void main(void)
 {
-    #ifdef SSR_SUPPORTED
-
     // *************** Get data from samplers ***************
 
-    vec4 original = texture2D(textureSampler, vUV);
     vec3 spec = toLinearSpace(texture2D(specularSampler, vUV).rgb);
 
     if (dot(spec, vec3(1.0)) <= 0.0){
-        gl_FragColor = texture2D(textureSampler, vUV); // no reflectivity, no need to compute reflection
+        gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);//texture2D(textureSampler, vUV); // no reflectivity, no need to compute reflection
         return;
     }
 
@@ -297,15 +287,14 @@ void main(void)
     // according to the pixel's position and normal.
     vec3 unitNormal = normalize((texture2D(normalSampler, vUV)).xyz);
     vec3 position = (view * texture2D(positionSampler, vUV)).xyz;
-
     vec3 unitPosition = normalize(position);
     vec3 reflected = normalize(reflect(unitPosition, unitNormal)); // incident direction = unit position in camera space
 
     // *************** Compute reflection info  ***************
     ReflectionInfo info;
-
     // hash(position) represents a random vector3, jitt represents a bias to simulate roughness (light deviation)
-    vec3 jitt = mix(vec3(0.0), hash(texture2D(positionSampler, vUV).xyz) * 0.2, roughness * roughnessFactor); // * 0.2 to set 1.0 default roughness
+    // vec3 jitt = mix(vec3(0.0), 0.2 * hash(texture2D(positionSampler, vUV).xyz), roughness) * roughnessFactor; // * 0.2 to set 1.0 default roughness
+    vec3 jitt = vec3(0.0);
 
     #ifdef RIGHT_HANDED_SCENE
         if (position.z < -distanceFade || distanceFade == 0.0){ // no need to compute reflection, the point we are evaluating is further than the distanceFade
@@ -315,12 +304,15 @@ void main(void)
                 info.miss = true;
                 info.visibilityBackup = 1.0;
             #else
-                gl_FragColor = texture2D(textureSampler, vUV); // no reflection, we leave the main function
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
                 return;
             #endif
         } else {
             vec2 texSize = gl_FragCoord.xy / vUV;
-            info = getReflectionInfo2DRayMarching(reflected + jitt, position, texSize);
+            info = getReflectionInfo2DRayMarching(reflected + jitt, position + 0.001, texSize);
+
+            float visibility = clamp(info.visibility, 0.0, 1.0);  
+            float visibilityBackup = clamp(info.visibilityBackup, 0.0, 1.0);
         }
     #else // if left handed scene
         if (position.z > distanceFade || distanceFade == 0.0){ // no need to compute reflection, the point we are evaluating is further than the distanceFade
@@ -330,7 +322,7 @@ void main(void)
                 info.miss = true;
                 info.visibilityBackup = 1.0;
             #else
-                gl_FragColor = texture2D(textureSampler, vUV); // no reflection, we leave the main function
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
                 return;
             #endif
         } else {
@@ -340,17 +332,20 @@ void main(void)
         }
     #endif
 
+    float visibility = clamp(info.visibility, 0.0, 1.0);  
+    float visibilityBackup = clamp(info.visibilityBackup, 0.0, 1.0);
+
     // *************** Get reflection color ***************
     
     vec3 reflectedColor;
     
     #if defined(BACKUP_TEXTURE_SKYBOX) || defined(BACKUP_TEXTURE_PROBE)
-        if (backupOnlyWhenTooSpecular && dot(spec, vec3(1.0))/3.0 > 0.7) {
-            info.visibility = 0.0;
-            info.visibilityBackup = 1.0;
-        }
         // compute reflection in view space and then come back to world space
         vec3 coord = vec3( inverse(view) * vec4(reflected, 0.0));
+        if (backupOnlyWhenTooSpecular && dot(spec, vec3(1.0))/3.0 > 0.7) {
+            visibility = 0.0;
+            visibilityBackup = 1.0;
+        }
 
         #ifdef BACKUP_TEXTURE_PROBE
             coord.y *= -1.0;
@@ -359,35 +354,117 @@ void main(void)
         #ifdef RIGHT_HANDED_SCENE
             coord.z *= -1.0;
         #endif
-        reflectedColor = textureCube(backUpSampler, coord + jitt).xyz * info.visibilityBackup;
+        reflectedColor = textureCube(backUpSampler, coord + jitt).xyz * visibilityBackup;
 
         if (!info.miss){
-            reflectedColor += texture2D(textureSampler, info.coords).xyz * info.visibility;
+            reflectedColor += texture2D(textureSampler, info.coords).xyz * visibility;
         }
     #else 
         if (info.miss){
-            gl_FragColor = texture2D(textureSampler, vUV);
+            // gl_FragColor = texture2D(textureSampler, vUV);
+            gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
             return;
         } else {
             reflectedColor = texture2D(textureSampler, info.coords).xyz;
         }
     #endif 
+
+    gl_FragColor = vec4(reflectedColor, visibilityBackup + visibility);
     
-    //  *********************** Shading *******************************
+}
+
+#else // not SSR_PASS
+
+#ifdef BILATERAL_BLUR
+
+void main(void)
+{
+    vec2 texSize = gl_FragCoord.xy / vUV;
+    float blurWidth = 5.0;
+    float visibility = texture2D(textureSampler, vUV).a;
+
+    float weights[7];
+    weights[0] = 0.025;
+    weights[1] = 0.1;
+    weights[2] = 0.225;
+    weights[3] = 0.3;
+    weights[4] = 0.225;
+    weights[5] = 0.1;
+    weights[6] = 0.025;
+
+    vec2 texelSize = vec2(1.0 / texSize.x, 1.0 / texSize.y);
+    vec2 texelStep = texelSize * direction * blurWidth;
+    vec2 start = vUV - 3.0 * texelStep;
+
+    vec4 baseColor = vec4(0.);
+    vec2 texelOffset = vec2(0., 0.);
+
+    for (int i = 0; i < 7; i++)
+    {   
+        if (texture2D(textureSampler, start + texelOffset).a > 0.9){
+            baseColor += texture2D(textureSampler, start + texelOffset) * weights[i];
+        } else {
+            baseColor += texture2D(textureSampler, start) * weights[i];
+        }
+        texelOffset += texelStep;
+    }
+    for (int i = 0; i < 7; i++)
+    {
+        if (texture2D(textureSampler, start + texelOffset).a > 0.9){
+            baseColor += texture2D(textureSampler, start + texelOffset) * weights[i];
+        } else {
+            baseColor += texture2D(textureSampler, start) * weights[i];
+        }
+        texelOffset += texelStep;
+    }
+   
+    gl_FragColor = vec4(baseColor/2.0);
+}
+
+#else // BLUR
+
+#ifdef COMBINE
+
+// Fresnel Schlicks formula according to https://learnopengl.com/PBR/Theory 
+vec3 fresnelSchlick(float cosTheta, vec3 F0)
+{
+    return F0 + (vec3(1.0) - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+void main(void) {
+
+    vec3 reflectedColor = texture2D(reflectedSampler, vUV).xyz; // reflected color 
+    float visibility = texture2D(reflectedSampler, vUV).a;
+
+    vec4 blurredReflectedColor = texture2D(textureSampler, vUV); // blured color
+    vec4 original = texture2D(originalColor, vUV); // original color
+
+    vec3 spec = toLinearSpace(texture2D(specularSampler, vUV).rgb);
+    reflectedColor = mix(reflectedColor, blurredReflectedColor.xyz, pow((1.0 - (texture2D(specularSampler, vUV)).a * roughnessFactor), 1.0) *  blurredReflectedColor.a); // final reflected color
+
+    vec3 unitNormal = normalize((texture2D(normalSampler, vUV)).xyz);
+    vec3 position = (view * texture2D(positionSampler, vUV)).xyz;
+    vec3 unitPosition = normalize(position);
 
     // Fresnel
     // "The specular map contains F0 for dielectrics and the reflectance value for raw metal"
     vec3 F0 = spec;
   
     vec3 reflectionCoeff = fresnelSchlick(max(dot(unitNormal, -unitPosition), 0.0), F0) // https://lettier.github.io/3d-game-shaders-for-beginners/fresnel-factor.html
-                            * (info.visibility + info.visibilityBackup); 
+                            * clamp((visibility), 0.0, 0.9); 
     reflectionCoeff = clamp(vec3(pow(reflectionCoeff.x * strength, falloffExponent), pow(reflectionCoeff.y * strength, falloffExponent), pow(reflectionCoeff.z * strength, falloffExponent)), 0.0, 1.0);
+
+    // // *********************** SHADING *******************************
 
     // Render the final color
     // (no refraction) and (AbsorbtionCoeff + RefractionCoeff + ReflectionCoeff = 1)  => AbsorbtionCoeff = 1 - ReflectionCoeff
     gl_FragColor = vec4((original.xyz * (vec3(1.0) - reflectionCoeff)) + (reflectedColor * reflectionCoeff), original.a);
 
-    #else // SSR not SUPPORTED
-    gl_FragColor = texture2D(textureSampler, vUV);
-    #endif // SSR_SUPPORTED
 }
+
+#endif // COMBINE
+
+#endif // BLUR
+
+#endif // SSR_PASS
+

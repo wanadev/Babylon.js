@@ -48,10 +48,10 @@ export class ScreenSpaceReflectionPostProcess extends PostProcess {
     @serialize()
     public strength: number = 1.0;
     /**
-     * Gets or sets the falloff exponent used while computing fresnel. More the exponent is high, more the reflections will be discrete.
+     * Gets or sets the falloff exponent used while computing fresnel. More the exponent is high, more the reflections will be discrete. Default value is 1.0.
      */
     @serialize()
-    public reflectionSpecularFalloffExponent: number = 0.0;
+    public reflectionSpecularFalloffExponent: number = 1.0;
     /**
      * Gets or sets the factor applied when computing roughness. Default value is 1.0.
      */
@@ -62,6 +62,12 @@ export class ScreenSpaceReflectionPostProcess extends PostProcess {
      */
     @serialize()
     public distanceFade: number = 1000.0;
+
+    /**
+     * Gets or sets the boolean deciding if we display only backUp reflections and no SSR reflection (true), or a mix of both (false).
+     */
+    @serialize()
+    public backupOnlyWhenTooSpecular: boolean = false;
 
     @serialize()
     private _backUpTextureSkybox: Nullable<CubeTexture> = null;
@@ -155,10 +161,10 @@ export class ScreenSpaceReflectionPostProcess extends PostProcess {
             name,
             "screenSpaceReflection",
             ["projection", "view", "maxDistance", "resolution", "steps", "thickness", 
-            "strength", "falloffExponent", "distanceFade", "minZ", "maxZ", "cameraPos", 
-            "roughnessFactor", "cubeTexHeight", "cubeTexWidth"],
+            "strength", "falloffExponent", "distanceFade", "minZ", "maxZ", "cameraPos", "backupOnlyWhenTooSpecular", 
+            "roughnessFactor"],
             ["textureSampler", "normalSampler", "depthSampler", "positionSampler", 
-            "specularSampler", "cameraPos", "backUpSampler", "albedoSampler"],
+            "specularSampler", "cameraPos", "backUpSampler"],
             options,
             camera,
             samplingMode,
@@ -175,12 +181,8 @@ export class ScreenSpaceReflectionPostProcess extends PostProcess {
             return;
         }
 
-        // this.inputTexture?.texture.useMipMaps = true;
-
-
         // PrePass
         this._forceGeometryBuffer = forceGeometryBuffer;
-        this._forceGeometryBuffer = false; //forceGeometryBuffer; // TODO remove when problem solved
         if (this._forceGeometryBuffer) {
             // Get geometry buffer renderer and update effect
             const geometryBufferRenderer = scene.enableGeometryBufferRenderer();
@@ -226,12 +228,8 @@ export class ScreenSpaceReflectionPostProcess extends PostProcess {
             }
             if (this._backUpTextureSkybox) {
                 effect.setTexture("backUpSampler", this._backUpTextureSkybox);
-                // effect.setFloat("cubeTexHeight", this._backUpTextureSkybox.getBaseSize().height); 
-                // effect.setFloat("cubeTexWidth", this._backUpTextureSkybox.getBaseSize().width);
             } else if (this._backUpTextureProbe) {
                 effect.setTexture("backUpSampler", this._backUpTextureProbe);
-                // effect.setFloat("cubeTexHeight", this._backUpTextureProbe.getBaseSize().height); 
-                // effect.setFloat("cubeTexWidth", this._backUpTextureProbe.getBaseSize().width);
             }
 
             const viewMatrix = camera.getViewMatrix(true);
@@ -249,6 +247,7 @@ export class ScreenSpaceReflectionPostProcess extends PostProcess {
             effect.setFloat("falloffExponent", this.reflectionSpecularFalloffExponent);
             effect.setFloat("roughnessFactor", this.roughnessFactor);
             effect.setFloat("distanceFade", this.distanceFade);
+            effect.setBool("backupOnlyWhenTooSpecular", this.backupOnlyWhenTooSpecular);
 
             effect.setFloat("minZ", camera.minZ);
             effect.setFloat("maxZ", camera.maxZ);
