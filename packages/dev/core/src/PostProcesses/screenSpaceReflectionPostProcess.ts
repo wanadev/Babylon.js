@@ -164,7 +164,7 @@ export class ScreenSpaceReflectionPostProcess extends PostProcess {
             "strength", "falloffExponent", "distanceFade", "minZ", "maxZ", "cameraPos", "backupOnlyWhenTooSpecular", 
             "roughnessFactor"],
             ["textureSampler", "normalSampler", "depthSampler", "positionSampler", 
-            "specularSampler", "cameraPos", "backUpSampler"],
+            "specularSampler", "backUpSampler"],
             options,
             camera,
             samplingMode,

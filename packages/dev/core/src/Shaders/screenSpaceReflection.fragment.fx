@@ -122,13 +122,12 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
     float depthAtCurrPosVS; 
 
 
-    // We should use variable thickness, depending on the distance between two adjacent pixels in view space
-    float offset; // use to compute maxTol offset. Then acts as filter (2 jobs, 1 variable)
+    // We are using varying thickness, depending on the distance between two adjacent pixels in view space
+    float offset; // use to compute maxTol offset
     float maxTol = thickness; // will be increased depending on distance between two adjacent pixels in view space
 
     // start of the first pass: looking for intersection position
     for (int i = 0; i < int(delta); i++) {
-        // first pass
         // move from the startSS to endSS using linear interpolation
         // currFragx = (startSS.x) * (1.0 - search1) + (endSS.x) * search1;
         // currFragy = (startSS.y) * (1.0 - search1) + (endSS.y) * search1;
