@@ -1,110 +1,114 @@
-import { Nullable } from "../types";
-import { Camera } from "../Cameras/camera";
+import type { Nullable } from "../types";
+import type { Camera } from "../Cameras/camera";
 import type { Effect } from "../Materials/effect";
-import { PostProcess, PostProcessOptions } from "./postProcess";
+import { PostProcess } from "./postProcess";
+import type { PostProcessOptions } from "./postProcess";
 import { Constants } from "../Engines/constants";
 import { GeometryBufferRenderer } from "../Rendering/geometryBufferRenderer";
 import { serialize, SerializationHelper } from "../Misc/decorators";
-import { PrePassRenderer } from "../Rendering/prePassRenderer";
+import type { PrePassRenderer } from "../Rendering/prePassRenderer";
 import { ScreenSpaceReflections2Configuration } from "../Rendering/screenSpaceReflections2Configuration";
 
 import "../Shaders/screenSpaceReflection2.fragment";
 import { RegisterClass } from "../Misc/typeStore";
-import { CubeTexture } from "../Materials/Textures/cubeTexture";
+import type { CubeTexture } from "../Materials/Textures/cubeTexture";
 
 declare type Engine = import("../Engines/engine").Engine;
 declare type Scene = import("../scene").Scene;
 
 /**
- * The ScreenSpaceReflectionPostProcess performs realtime reflections using only the available informations on the screen (positions, depth and normals).
- * Basically, the screen space reflection post-process will compute reflections according the material's properties (TODO: verify this specularity/glossiness, metallic/roughness or reflectivity).
+ * The ScreenSpaceReflection2PostProcess performs realtime reflections using only the available information on the screen (positions, depth and normals).
+ * Basically, the screen space reflection post-process will compute reflections according the material's properties.
  */
 export class ScreenSpaceReflection2PostProcess extends PostProcess {
+    private _isSceneRightHanded: boolean;
+
     /**
-     * Gets or sets the maxDistance used to define how far we look for reflection during the ray-marching on the reflected ray
+     * Gets or sets the maxDistance used to define how far we look for reflection during the ray-marching on the reflected ray. Default value is 20.0.
      */
     @serialize()
-    public maxDistance: number = 10.0;
+    public maxDistance: number = 20.0;
     /**
      * Gets or sets the resolution used for the first pass of the 2D ray marching algorithm.
-     * Controls how many fragments are skipped while marching the reflected ray. Typically in interval [0.1, 1.0].
+     * Controls how many fragments are skipped while marching the reflected ray. Typically in interval [0.1, 1.0]. Default value is 0.5.
      * If resolution equals 0.0, every fragments are skiped and this results in no reflection at all.
      */
     @serialize()
     public resolution: number = 0.5;
     /**
-     * Gets or sets the number of steps allowed for the second pass of the algorithm. More the steps is high, more the reflections will be precise.
+     * Gets or sets the number of steps allowed for the second pass of the algorithm. More the steps is high, more the reflections will be precise. Default value is 15.
      */
     @serialize()
     public steps: number = 15;
     /**
-     * Gets or sets the thickness value used as tolerance when computing the intersection between the reflected ray and the scene.
+     * Gets or sets the thickness value used as tolerance when computing the intersection between the reflected ray and the scene. Default value is 0.1.
      */
     @serialize()
-    public thickness: number = 0.2;
+    public thickness: number = 0.1;
     /**
-     * Gets or sets the current reflection strength. 1.0 is an ideal value but can be increased/decreased for particular results.
+     * Gets or sets the current reflection strength. 1.0 is an ideal value but can be increased/decreased for particular results. Default value is 1.0.
      */
     @serialize()
     public strength: number = 1.0;
     /**
-     * Gets or sets the falloff exponent used while computing fresnel. More the exponent is high, more the reflections will be discrete.
+     * Gets or sets the falloff exponent used while computing fresnel. More the exponent is high, more the reflections will be discrete. Default value is 3.0.
      */
     @serialize()
-    public reflectionSpecularFalloffExponent: number = 0.0;
+    public reflectionSpecularFalloffExponent: number = 1.0;
     /**
-     * Gets or sets the factor applied when computing roughness. Default value is 1.0.
+     * Gets or sets the factor applied when computing roughness. Default value is 0.2.
      */
     @serialize()
-    public roughnessFactor: number = 1.0;
+    public roughnessFactor: number = 0.2;
     /**
-     * Gets or sets the distance at whitch the SSR algorithme no longer applies.
+     * Gets or sets the distance at whitch the SSR algorithme no longer applies. Default value is 1000.
      */
     @serialize()
     public distanceFade: number = 1000.0;
 
+    /**
+     * Gets or sets the reflectivity value beyond which the SSR is no longer computed. Default value is 1.1.
+     * It may be needed when the scene contains mirror like materials.
+     * SSR and an other method may not match well, and it can be prettier to use only one method rather than a mix of methods in this case.
+     */
     @serialize()
-    private _backUpTextureSkybox: Nullable<CubeTexture> = null;
+    public maxReflectivityForSSRReflections: number = 1.1;
+
+    @serialize()
+    private _environmentTexture: Nullable<CubeTexture> = null;
 
     /**
      * Gets the Skybox cubeTexture used to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
      */
-    get backUpTextureSkybox(): Nullable<CubeTexture> {
-        return this._backUpTextureSkybox;
+    get environmentTexture(): Nullable<CubeTexture> {
+        return this._environmentTexture;
     }
 
     /**
      * Sets the Skybox cubeTexture to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
      */
-    set backUpTextureSkybox(backUpTex: Nullable<CubeTexture>) {
-        this._backUpTextureSkybox = backUpTex;
+    set environmentTexture(backUpTex: Nullable<CubeTexture>) {
+        this._environmentTexture = backUpTex;
         this._updateEffectDefines();
     }
 
     @serialize()
-    private _backUpTextureProbe: Nullable<CubeTexture> = null;
+    private _environmentTextureIsProbe: boolean = false;
 
     /**
-     * Gets the Probe cubeTexture used to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
+     * Gets the boolean defining if the environment texture is a Skybox (false) or a probe (true). Default value is false.
      */
-    public get backUpTextureProbe(): Nullable<CubeTexture> {
-        return this._backUpTextureProbe;
+    public get environmentTextureIsProbe(): boolean {
+        return this._environmentTextureIsProbe;
     }
 
     /**
-     * Sets a Probe cubeTexture to define the reflection when the reflected rays of SSR leave the view space or when the maxDistance is reached.
+     * Sets the boolean defining if the environment texture is a Skybox (false) or a probe (true). Default value is false.
      */
-    public set backUpTextureProbe(backUpTex: Nullable<CubeTexture>) {
-        this._backUpTextureProbe = backUpTex;
+    public set environmentTextureIsProbe(isProbe: boolean) {
+        this._environmentTextureIsProbe = isProbe;
         this._updateEffectDefines();
     }
-
-    /**
-     * Gets or sets a boolean which defines if the algorithme must increase the rendering quality according to the depth view
-     */
-    @serialize()
-    public changeProperties: boolean = false;
-
 
     private _forceGeometryBuffer: boolean = false;
     private get _geometryBufferRenderer(): Nullable<GeometryBufferRenderer> {
@@ -122,8 +126,6 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
 
         return this._scene.prePassRenderer;
     }
-
-    private _isSceneRightHanded: boolean;
 
     /**
      * Gets a string identifying the name of the class
@@ -161,11 +163,23 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
         super(
             name,
             "screenSpaceReflection2",
-            ["projection", "view", "maxDistance", "resolution", "steps", "thickness", 
-            "strength", "falloffExponent", "distanceFade", "minZ", "maxZ", "cameraPos", 
-            "roughnessFactor", "cubeTexHeight", "cubeTexWidth"],
-            ["textureSampler", "normalSampler", "depthSampler", "positionSampler", 
-            "specularSampler", "cameraPos", "backUpSampler", "albedoSampler"],
+            [
+                "projection",
+                "view",
+                "maxDistance",
+                "resolution",
+                "steps",
+                "thickness",
+                "strength",
+                "falloffExponent",
+                "distanceFade",
+                "minZ",
+                "maxZ",
+                "cameraPos",
+                "maxReflectivityForSSRReflections",
+                "roughnessFactor",
+            ],
+            ["textureSampler", "normalSampler", "depthSampler", "positionSampler", "reflectivitySampler", "backUpSampler"],
             options,
             camera,
             samplingMode,
@@ -182,12 +196,8 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             return;
         }
 
-        // this.inputTexture?.texture.useMipMaps = true;
-
-
         // PrePass
         this._forceGeometryBuffer = forceGeometryBuffer;
-        this._forceGeometryBuffer = false; //forceGeometryBuffer; // TODO remove when problem solved
         if (this._forceGeometryBuffer) {
             // Get geometry buffer renderer and update effect
             const geometryBufferRenderer = scene.enableGeometryBufferRenderer();
@@ -219,7 +229,7 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 effect.setTexture("normalSampler", this._geometryBufferRenderer!.getGBuffer().textures[1]);
                 effect.setTexture("positionSampler", this._geometryBufferRenderer!.getGBuffer().textures[positionIndex]);
                 effect.setTexture("depthSampler", this._geometryBufferRenderer!.getGBuffer().textures[0]);
-                effect.setTexture("specularSampler", this._geometryBufferRenderer!.getGBuffer().textures[reflectivityIndex]);
+                effect.setTexture("reflectivitySampler", this._geometryBufferRenderer!.getGBuffer().textures[reflectivityIndex]);
             } else if (this._prePassRenderer) {
                 // Samplers
                 const normalIndex = this._prePassRenderer.getIndex(Constants.PREPASS_NORMAL_TEXTURE_TYPE);
@@ -229,17 +239,21 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
                 effect.setTexture("normalSampler", this._prePassRenderer.getRenderTarget().textures[normalIndex]);
                 effect.setTexture("positionSampler", this._prePassRenderer.getRenderTarget().textures[positionIndex]);
                 effect.setTexture("depthSampler", this._prePassRenderer.getRenderTarget().textures[depthIndex]);
-                effect.setTexture("specularSampler", this._prePassRenderer.getRenderTarget().textures[reflectivityIndex]);
+                effect.setTexture("reflectivitySampler", this._prePassRenderer.getRenderTarget().textures[reflectivityIndex]);
             }
-            if (this._backUpTextureSkybox) {
-                effect.setTexture("backUpSampler", this._backUpTextureSkybox);
-                // effect.setFloat("cubeTexHeight", this._backUpTextureSkybox.getBaseSize().height); 
-                // effect.setFloat("cubeTexWidth", this._backUpTextureSkybox.getBaseSize().width);
-            } else if (this._backUpTextureProbe) {
-                effect.setTexture("backUpSampler", this._backUpTextureProbe);
-                // effect.setFloat("cubeTexHeight", this._backUpTextureProbe.getBaseSize().height); 
-                // effect.setFloat("cubeTexWidth", this._backUpTextureProbe.getBaseSize().width);
+            if (this._environmentTexture) {
+                effect.setTexture("backUpSampler", this._environmentTexture);
             }
+
+            effect.setFloat("resolution", this.resolution);
+            effect.setInt("steps", this.steps);
+            effect.setFloat("thickness", this.thickness);
+            effect.setFloat("distanceFade", this.distanceFade);
+            effect.setFloat("maxDistance", this.maxDistance);
+            effect.setFloat("maxReflectivityForSSRReflections", this.maxReflectivityForSSRReflections);
+            effect.setFloat("minZ", camera.minZ);
+            effect.setFloat("maxZ", camera.maxZ);
+            effect.setVector3("cameraPos", camera.position);
 
             const viewMatrix = camera.getViewMatrix(true);
             const projectionMatrix = camera.getProjectionMatrix(true);
@@ -247,20 +261,9 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             effect.setMatrix("projection", projectionMatrix);
             effect.setMatrix("view", viewMatrix);
 
-            effect.setFloat("maxDistance", this.maxDistance);
-
-            effect.setFloat("resolution", this.resolution);
-            effect.setInt("steps", this.steps);
-            effect.setFloat("thickness", this.thickness);
             effect.setFloat("strength", this.strength);
             effect.setFloat("falloffExponent", this.reflectionSpecularFalloffExponent);
             effect.setFloat("roughnessFactor", this.roughnessFactor);
-            effect.setFloat("distanceFade", this.distanceFade);
-
-            effect.setFloat("minZ", camera.minZ);
-            effect.setFloat("maxZ", camera.maxZ);
-
-            effect.setVector3("cameraPos", camera.position)
         };
     }
 
@@ -274,19 +277,18 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
             defines.push("#define RIGHT_HANDED_SCENE");
         }
 
-        if (this._backUpTextureSkybox) {
-            defines.push("#define BACKUP_TEXTURE_SKYBOX");
+        if (this._environmentTexture) {
+            defines.push("#define BACKUP_TEXTURE");
         }
 
-        if (this._backUpTextureProbe) {
-            defines.push("#define BACKUP_TEXTURE_PROBE");
+        if (this._environmentTextureIsProbe) {
+            defines.push("#define BACKUP_TEXTURE_IS_PROBE");
         }
 
         this.updateEffect(defines.join("\n"));
     }
 
     /**
-     *
      * @param parsedPostProcess
      * @param targetCamera
      * @param scene
@@ -314,4 +316,4 @@ export class ScreenSpaceReflection2PostProcess extends PostProcess {
     }
 }
 
-RegisterClass("BABYLON.ScreenSpaceReflection2PostProcess", ScreenSpaceReflection2PostProcess);
+RegisterClass("BABYLON.ScreenSpaceReflectionPost2Process", ScreenSpaceReflection2PostProcess);
