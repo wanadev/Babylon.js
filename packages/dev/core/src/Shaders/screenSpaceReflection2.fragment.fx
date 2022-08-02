@@ -22,7 +22,6 @@ uniform float falloffExponent;
 uniform float roughnessFactor;
 uniform float distanceFade;
 uniform float maxReflectivityForSSRReflections;
-#include<helperFunctions>
 #endif // SSR_SUPPORTED
 
 uniform mat4 view;
@@ -236,7 +235,7 @@ ReflectionInfo getReflectionInfo2DRayMarching(vec3 dirVS, vec3 hitCoordVS, vec2 
         vec2 nextPixelOffset = increment * resolution;
         if (dot(normalize(dirVS), normalInUV) > 0.0){
             info.visibility = 0.0; // hit backface of a mesh
-        } else {
+        }else {
             vec2 dCoordScreen = smoothstep(vec2(0.2), vec2(0.6), abs(vec2(0.5, 0.5) - uv)); // HermiteInterpolation
             info.visibility = texture2D(textureSampler, uv).a // alpha value of the reflected scene position 
        
@@ -270,7 +269,7 @@ void main(void)
     // *************** Get data from samplers ***************
 
     vec4 original = texture2D(textureSampler, vUV);
-    vec4 spec = toLinearSpace(texture2D(reflectivitySampler, vUV));
+    vec4 spec = (texture2D(reflectivitySampler, vUV));
 
     if (dot(spec.xyz, vec3(1.0)) <= 0.0){ // TODO ? 0.04 * 3.0
         gl_FragColor = original; // no reflectivity, no need to compute reflection
